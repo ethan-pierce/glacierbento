@@ -24,5 +24,5 @@ class Field(eqx.Module):
     location: str = eqx.field(converter = str)
 
     def __post_init__(self):
-        if location not in ["node", "link", "patch", "corner", "face", "cell"]:
+        if self.location not in ["node", "link", "patch", "corner", "face", "cell"]:
             raise ValueError("Invalid location for field.")

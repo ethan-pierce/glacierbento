@@ -42,6 +42,7 @@ class StaticGrid(eqx.Module):
     """Stores a computational mesh and provides methods to map between elements."""
 
     # Density of grid elements
+    shape: tuple = eqx.field(converter = tuple)
     number_of_nodes: int = eqx.field(converter = int)
     number_of_links: int = eqx.field(converter = int)
     number_of_patches: int = eqx.field(converter = int)

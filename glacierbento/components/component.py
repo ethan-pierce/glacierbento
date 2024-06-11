@@ -1,11 +1,4 @@
-"""Define a common interface for model components.
-
-In order to function properly as a Component, an object must be tied to a Model
-instance. This is necessary because the Model object mediates between all
-Components, the shared Grid, Fields, and Parameters. Components should not access 
-these objects directly, but instead should pass information through the Model. By
-default, Components will not
-"""
+"""Define a common interface for model components."""
 
 import jax.numpy as jnp
 import equinox as eqx
@@ -43,7 +36,8 @@ class Component(eqx.Module):
     accept a float indicating the size of the desired time step.
 
     Specific Components that inherit from this class *must* write default values 
-    for required fields and default parameters in the class definition.
+    for required fields and default parameters in the class definition. Where
+    appropriate, Components should also cite a source paper in their docstring.
     
     Components will be created and destroyed many times during the typical
     lifetime of a Model, so it is important to keep any required setup as
@@ -54,23 +48,26 @@ class Component(eqx.Module):
     Attributes:
         grid: The StaticGrid object that the Component operates on.
         fields: A dictionary of Field objects or Arrays.
-        required_fields: A list of field names that the Component requires.
+        required_fields: A dictionary with {names: locations} of required fields.
         params: A dictionary of parameters.
-        default_parameters: A dictionary with default values for parameters.
+    
+    Methods:
+        run_one_step: Advance the model by one time step.
+        get_output: Return the output field(s) of the model.
     """
 
-    grid: StaticGrid
-    fields: dict
-    params: dict
-    required_fields: list
-    default_parameters: dict
+    _grid: StaticGrid
+    _fields: dict
+    _params: dict
+    required_fields: dict
 
-    def __init__(self, grid, fields, params = {}):
+    def __init__(self, grid, fields, params = {}, required_fields = {}, default_parameters = {}):
         """Initialize the Component."""
         self._grid = grid
+        self.required_fields = required_fields
 
         self._fields = {}
-        for var, field in kwargs.items():
+        for var, field in fields.items():
             try:
                 loc = field.location
             except:
@@ -79,11 +76,13 @@ class Component(eqx.Module):
                 
             self._fields[var] = field
 
-        for field in self.required_fields:
+        for field, loc in self.required_fields.items():
             if field not in self._fields.keys():
                 raise ValueError(f"Field {field} is required but not provided.")
+            if self._fields[field].location != loc:
+                raise ValueError(f"Field {field} must be defined on grid element: {loc}.")
 
-        self._params = self.default_parameters
+        self._params = default_parameters
         for key, value in params.items():
             self._params[key] = value
 
@@ -93,3 +92,7 @@ class Component(eqx.Module):
         """Run one time step of the Component."""
         pass
 
+    @abstractmethod
+    def get_output(self):
+        """Return the output field(s) of the Component."""
+        pass
