@@ -55,22 +55,74 @@ class DistributedDrainageSystem(Component):
         """Initialize the DistributedDrainageSystem."""
         super().__init__(grid, fields, params, required_fields, default_parameters)
 
-        self._fields['hydraulic_potential'] = Field(
-            'hydraulic_potential', jnp.zeros(grid.number_of_nodes), 'Pa', 'node'
+        initial_potential = (
+            self._params['ice_density'] 
+            * self._params['gravity'] 
+            * self._fields['ice_thickness'].value
+            * 0.8
         )
 
-        self._fields['gap_height'] = Field(
+        self._fields['hydraulic_potential'] = Field(
+            'hydraulic_potential', initial_potential, 'Pa', 'node'
+        )
+
+        self._fields['sheet_thickness'] = Field(
             'sheet_thickness', jnp.zeros(grid.number_of_nodes), 'm', 'node'
         )
 
-    def calc_effective_pressure(self):
+    def _calc_dhdt(self, hydraulic_potential: jnp.ndarray, sheet_thickness: jnp.ndarray):
+        """Calculate the rate of change of the thickness of sheet flow."""
+        N = self.calc_effective_pressure(hydraulic_potential)
+        ub = self._fields['sliding_velocity'].value
+
+        opening = (
+            jnp.abs(ub) 
+            / self._params['cavity_spacing']
+            * jnp.where(
+                sheet_thickness >= self._params['bed_bump_height'],
+                jnp.zeros_like(sheet_thickness),
+                self._params['bed_bump_height'] - sheet_thickness
+            )
+        )
+
+        closure = (
+            (2 / self._params['ice_flow_n']**self._params['ice_flow_n'])
+            * self._params['ice_flow_coeff']
+            * sheet_thickness
+            * jnp.abs(N)**(self._params['ice_flow_n'] - 1)
+            * N
+        )
+
+        return opening - closure
+
+    def _solve_for_potential(self, hydraulic_potential: jnp.ndarray, sheet_thickness: jnp.ndarray):
+        """Solve for the hydraulic potential given the sheet thickness."""
+        pass
+
+    def calc_effective_pressure(self, hydraulic_potential: jnp.ndarray):
         """Calculate effective pressure from the hydraulic potential."""
         H = self._fields['ice_thickness'].value
         b = self._fields['bed_elevation'].value
-        phi = self._fields['hydraulic_potential'].value
         overburden = self._params['ice_density'] * self._params['gravity'] * H
-        water_pressure = phi - self._params['water_density'] * self._params['gravity'] * b
+        water_pressure = (
+            hydraulic_potential - self._params['water_density'] * self._params['gravity'] * b
+        )
         return overburden - water_pressure
+
+    def calc_discharge(self, hydraulic_potential: jnp.ndarray, sheet_thickness: jnp.ndarray):
+        """Calculate the discharge through the sheet flow on grid links."""
+        k = self._params['sheet_conductivity']
+        a = self._params['flow_exp_a']
+        b = self._params['flow_exp_b']
+        grad_phi = self._grid.calc_grad_at_link(hydraulic_potential)
+        h_at_links = self._grid.map_mean_of_link_nodes_to_link(sheet_thickness)
+
+        return (
+            -k
+            * h_at_links**a
+            * jnp.abs(grad_phi)**b
+            * grad_phi
+        )
 
     def run_one_step(self, dt: float):
         """Advance the model by one time step."""

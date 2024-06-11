@@ -3,6 +3,8 @@
 import pytest
 import numpy as np
 from numpy.testing import assert_array_equal, assert_array_almost_equal
+import jax.numpy as jnp
+import equinox as eqx
 from landlab import RasterModelGrid
 from glacierbento.utils import freeze_grid
 from glacierbento.components import DistributedDrainageSystem
@@ -33,13 +35,27 @@ def dds(grid):
         }
     )
 
+def test_init(dds):
+    assert_array_equal(
+        dds._fields['hydraulic_potential'].value, 
+        917 * 9.81 * dds._fields['ice_thickness'].value * 0.8
+    )
+    assert_array_equal(
+        dds._fields['sheet_thickness'].value, 
+        np.zeros(dds._grid.number_of_nodes)
+    )
+
 def test_calc_pressure(dds):
-    N = dds.calc_effective_pressure()
+    N = dds.calc_effective_pressure(dds._fields['hydraulic_potential'].value)
 
     Pi = 917 * 9.81 * dds._fields['ice_thickness'].value
     Pw = dds._fields['hydraulic_potential'].value - 1000 * 9.81 * dds._fields['bed_elevation'].value
 
     assert_array_equal(N, Pi - Pw)
 
+def test_calc_dhdt(dds):
+    dhdt = dds._calc_dhdt(dds._fields['hydraulic_potential'].value, dds._fields['sheet_thickness'].value)
+
+    assert_array_almost_equal(dhdt, np.full(dds._grid.number_of_nodes, 1.584e-9), decimal = 12)
 
 
