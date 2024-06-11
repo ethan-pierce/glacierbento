@@ -63,6 +63,15 @@ class DistributedDrainageSystem(Component):
             'sheet_thickness', jnp.zeros(grid.number_of_nodes), 'm', 'node'
         )
 
+    def calc_effective_pressure(self):
+        """Calculate effective pressure from the hydraulic potential."""
+        H = self._fields['ice_thickness'].value
+        b = self._fields['bed_elevation'].value
+        phi = self._fields['hydraulic_potential'].value
+        overburden = self._params['ice_density'] * self._params['gravity'] * H
+        water_pressure = phi - self._params['water_density'] * self._params['gravity'] * b
+        return overburden - water_pressure
+
     def run_one_step(self, dt: float):
         """Advance the model by one time step."""
         updated_potential = self._fields['hydraulic_potential']

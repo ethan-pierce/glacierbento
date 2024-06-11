@@ -16,13 +16,14 @@ def grid():
     static = freeze_grid(rmg)
     return static
 
-def test_init(grid):
+@pytest.fixture
+def dds(grid):
     ice_thickness = 5 * grid.node_x**(1/2) # from 150 m to 0 m
-    bed_elevation = np.zeros(grid.number_of_nodes) # 0 m
+    bed_elevation = np.zeros(grid.number_of_nodes) + 1 # 1 m
     sliding_velocity = np.ones(grid.number_of_nodes) / 31556926 # 1 m / a
     melt_input = np.ones(grid.number_of_nodes) * 0.05 / 31556926 # 0.05 m / a
 
-    dds = DistributedDrainageSystem(
+    return DistributedDrainageSystem(
         grid, 
         {
             'ice_thickness': ice_thickness,
@@ -32,5 +33,13 @@ def test_init(grid):
         }
     )
 
-    assert dds.grid == grid
-    
+def test_calc_pressure(dds):
+    N = dds.calc_effective_pressure()
+
+    Pi = 917 * 9.81 * dds._fields['ice_thickness'].value
+    Pw = dds._fields['hydraulic_potential'].value - 1000 * 9.81 * dds._fields['bed_elevation'].value
+
+    assert_array_equal(N, Pi - Pw)
+
+
+
