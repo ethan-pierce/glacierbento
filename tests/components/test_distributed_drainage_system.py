@@ -62,12 +62,10 @@ def test_calc_discharge(dds):
     assert_array_almost_equal(Q[:3], [-2.3295, -0.1656, -0.0748], decimal = 4)
 
 def test_run_one_step(dds):
-    for i in range(10):
-        dds = dds.run_one_step(1)
+    dds = eqx.tree_at(
+        lambda t: t._fields['bed_elevation'].value,
+        dds,
+        dds._fields['bed_elevation'].value.at[10].set(0)
+    )
 
-        import matplotlib.pyplot as plt
-        plt.imshow(
-            dds._fields['hydraulic_potential'].value.reshape(3, 10)
-        )
-        plt.colorbar()
-        plt.show()
+    dds = dds.run_one_step(1)
