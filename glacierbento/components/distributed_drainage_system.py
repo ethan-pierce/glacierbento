@@ -70,6 +70,26 @@ class DistributedDrainageSystem(Component):
             'sheet_thickness', jnp.zeros(grid.number_of_nodes), 'm', 'node'
         )
 
+    def _set_inflow_outflow(self, potential: jnp.array) -> jnp.array:
+        """Determine whether boundary nodes expect inflow or outflow."""
+        min_adj_potential = jnp.min(
+            jnp.where(
+                self.grid.adjacent_nodes_at_node != -1,
+                potential[self.grid.adjacent_nodes_at_node],
+                jnp.inf
+            ),
+            axis = 1
+        )
+
+        # 1 denotes inflow, -1 denotes outflow
+        inflow_outflow = jnp.where(
+            potential <= min_adj_potential,
+            -1 * (self.grid.status_at_node > 0),
+            1 * (self.grid.status_at_node > 0)
+        )
+
+        return inflow_outflow
+
     def _calc_dhdt(self, hydraulic_potential: jnp.ndarray, sheet_thickness: jnp.ndarray):
         """Calculate the rate of change of the thickness of sheet flow."""
         N = self.calc_effective_pressure(hydraulic_potential)
