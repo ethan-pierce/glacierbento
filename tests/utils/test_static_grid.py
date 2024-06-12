@@ -130,3 +130,9 @@ def test_calc_gradient_vector_at_node(grid, static_grid):
 
     assert_array_almost_equal(magnitude, expected_magnitude)
     assert_array_almost_equal(components, expected_comps_transpose)
+
+def test_build_link_between_nodes_array(static_grid):
+    """Test the build_link_between_nodes_array method."""
+    array = static_grid.build_link_between_nodes_array()
+
+    assert array.shape == (static_grid.number_of_nodes, static_grid.number_of_nodes)

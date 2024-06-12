@@ -19,6 +19,7 @@ Typical usage example:
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import equinox as eqx
 import dataclasses
 from landlab import ModelGrid
@@ -217,3 +218,19 @@ class StaticGrid(eqx.Module):
 
         return magnitude_at_node, jnp.asarray([x_component, y_component]).T
         
+    def build_link_between_nodes_array(self):
+        """Construct an array of links connecting each pair of nodes."""
+        # This function is not compatible with JIT operations.abs
+
+        link_between_nodes = np.full((self.number_of_nodes, self.number_of_nodes), -1)
+
+        for i in range(self.number_of_nodes):
+            adj = self.adjacent_nodes_at_node[i]
+
+            for j in adj[adj != -1]:
+                link = np.intersect1d(self.links_at_node[i], self.links_at_node[j])
+                link = int(link[link != -1])
+
+                link_between_nodes[i, j] = link
+
+        return link_between_nodes
