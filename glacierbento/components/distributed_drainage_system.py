@@ -21,12 +21,17 @@ Journal of Glaciology, 1-14.
 import jax
 import jax.numpy as jnp
 import equinox as eqx
+import lineax as lx
+import optimistix as optx
 from glacierbento.utils import Field
 from glacierbento.components import Component
 
 
 class DistributedDrainageSystem(Component):
     """Model a distributed subglacial drainage system."""
+
+    link_between_nodes: jax.Array = eqx.field(converter = jnp.asarray, init = False)
+    boundary_tags: jax.Array = eqx.field(converter = jnp.asarray, init = False)
 
     def __init__(
         self,
@@ -62,6 +67,13 @@ class DistributedDrainageSystem(Component):
             * 0.8
         )
 
+        self.link_between_nodes = self._grid.build_link_between_nodes_array()
+        self.boundary_tags = self._set_inflow_outflow(
+            self._fields['bed_elevation'].value
+            * self._params['water_density']
+            * self._params['gravity']
+        )
+
         self._fields['hydraulic_potential'] = Field(
             'hydraulic_potential', initial_potential, 'Pa', 'node'
         )
@@ -74,8 +86,8 @@ class DistributedDrainageSystem(Component):
         """Determine whether boundary nodes expect inflow or outflow."""
         min_adj_potential = jnp.min(
             jnp.where(
-                self.grid.adjacent_nodes_at_node != -1,
-                potential[self.grid.adjacent_nodes_at_node],
+                self._grid.adjacent_nodes_at_node != -1,
+                potential[self._grid.adjacent_nodes_at_node],
                 jnp.inf
             ),
             axis = 1
@@ -84,8 +96,8 @@ class DistributedDrainageSystem(Component):
         # 1 denotes inflow, -1 denotes outflow
         inflow_outflow = jnp.where(
             potential <= min_adj_potential,
-            -1 * (self.grid.status_at_node > 0),
-            1 * (self.grid.status_at_node > 0)
+            -1 * (self._grid.status_at_node > 0),
+            1 * (self._grid.status_at_node > 0)
         )
 
         return inflow_outflow
@@ -115,9 +127,139 @@ class DistributedDrainageSystem(Component):
 
         return opening - closure
 
+    def _get_coeffs_at_link(
+        self, cell: int, j: int, hydraulic_potential: jnp.array, sheet_thickness: jnp.array
+    ):
+        """Get the coefficients of the linear system at the link between a cell and neighboring node 'j'."""
+        i = self._grid.node_at_cell[cell]
+        link = self.link_between_nodes[i, j]
+        link_len = self._grid.length_of_link[link]
+        face_len = self._grid.length_of_face[self._grid.face_at_link[link]]
+
+        sheet_flux = (
+            self.calc_discharge(hydraulic_potential, sheet_thickness)[link]
+            * face_len
+            / link_len
+        )
+
+        return jnp.where(
+            self._grid.status_at_link[link] == 0,
+            sheet_flux,
+            0.0
+        )
+
+    def _assemble_row(
+        self, cell: int, hydraulic_potential: jnp.array, sheet_thickness: jnp.array, 
+    ) -> tuple:
+        """Assemble the matrix entries and any addition to the forcing vector at one cell."""
+        i = self._grid.node_at_cell[cell]
+        adj_nodes = self._grid.adjacent_nodes_at_node[i]
+
+        get_coeffs = jax.vmap(
+            lambda j: self._get_coeffs_at_link(cell, j, hydraulic_potential, sheet_thickness)
+        )
+
+        coeffs = jnp.where(
+            adj_nodes != -1,
+            get_coeffs(adj_nodes),
+            0.0
+        )
+
+        base_potential = (
+            self._fields['bed_elevation'].value
+            * self._params['water_density']
+            * self._params['gravity']
+        )
+
+        added_forcings = jnp.where(
+            (self.boundary_tags[adj_nodes] == -1) & (adj_nodes != -1),
+            -coeffs * base_potential[adj_nodes],
+            0.0
+        )
+
+        forcing = jnp.sum(added_forcings)
+        
+        empty_row = jnp.zeros(self._grid.number_of_cells)
+
+        def assign_coeffs(row, jidx):
+            j = adj_nodes[jidx]
+            jcell = self._grid.cell_at_node[j]
+
+            # If jcell != -1, it is an interior cell
+            # If jcell == -1, it is a boundary cell
+            # but recall that the coefficients at Neumann boundaries are always zero
+            row = jnp.where(
+                jcell != -1,
+                row.at[jcell].add(coeffs[jidx]).at[cell].add(-coeffs[jidx]),
+                row.at[cell].add(-coeffs[jidx])
+            )
+            return row, None
+
+        row, _ = jax.lax.scan(
+            assign_coeffs,
+            empty_row,
+            jnp.arange(len(adj_nodes))
+        )
+    
+        return (forcing, row)
+
+    def _build_forcing_vector(
+        self, hydraulic_potential: jnp.array, sheet_thickness: jnp.array,
+    ):
+        """Calculate the forcing vector for potential at grid cells."""
+        dhdt = self._calc_dhdt(hydraulic_potential, sheet_thickness)
+        m = self._fields['melt_input'].value
+        
+        forcing_at_nodes = m - dhdt
+
+        return forcing_at_nodes[self._grid.node_at_cell]
+
+    def _assemble_linear_system(
+        self, hydraulic_potential: jnp.ndarray, sheet_thickness: jnp.ndarray
+    ) -> tuple:
+        """Assemble the linear system and forcing vector for the elliptic PDE for potential."""
+        forcing, matrix = jax.vmap(self._assemble_row, in_axes = (0, None, None))(
+            jnp.arange(self._grid.number_of_cells),
+            hydraulic_potential,
+            sheet_thickness
+        )
+
+        base_forcing = self._build_forcing_vector(hydraulic_potential, sheet_thickness)
+        forcing = jnp.add(forcing, base_forcing)
+
+        return forcing, matrix
+
     def _solve_for_potential(self, hydraulic_potential: jnp.ndarray, sheet_thickness: jnp.ndarray):
-        """Solve for the hydraulic potential given the sheet thickness."""
-        pass
+        """Solve for potential from the previous step's potential and sheet thickness."""
+        b, A = self._assemble_linear_system(hydraulic_potential, sheet_thickness)
+        operator = lx.MatrixLinearOperator(A)
+        solution = lx.linear_solve(operator, b)
+
+        base_potential = (
+            self._fields['bed_elevation'].value
+            * self._params['water_density']
+            * self._params['gravity']
+        )
+
+        return jnp.where(
+            self._grid.cell_at_node != -1,
+            solution.value[self._grid.cell_at_node],
+            base_potential
+        )
+
+    def _update_sheet_thickness(
+        self, dt: float, hydraulic_potential: jnp.ndarray, sheet_thickness: jnp.ndarray
+    ):
+        """Update the thickness of the sheet flow."""
+        residual = lambda h, _: h - sheet_thickness - dt * self._calc_dhdt(hydraulic_potential, h)
+        solver = optx.Newton(rtol = 1e-6, atol = 1e-6)
+        solution = optx.root_find(residual, solver, sheet_thickness, args = None)
+
+        return jnp.where(
+            self.boundary_tags == 0,
+            solution.value,
+            0.0
+        )
 
     def calc_effective_pressure(self, hydraulic_potential: jnp.ndarray):
         """Calculate effective pressure from the hydraulic potential."""
@@ -146,11 +288,16 @@ class DistributedDrainageSystem(Component):
 
     def run_one_step(self, dt: float):
         """Advance the model by one time step."""
-        updated_potential = self._fields['hydraulic_potential']
-        updated_thickness = self._fields['sheet_thickness']
+        updated_thickness = self._update_sheet_thickness(
+            dt, self._fields['hydraulic_potential'].value, self._fields['sheet_thickness'].value
+        )
+
+        updated_potential = self._solve_for_potential(
+            self._fields['hydraulic_potential'].value, updated_thickness
+        )
 
         return eqx.tree_at(
-            lambda t: (t._fields['hydraulic_potential'], t._fields['sheet_thickness']),
+            lambda t: (t._fields['hydraulic_potential'].value, t._fields['sheet_thickness'].value),
             self,
             (updated_potential, updated_thickness)
         )

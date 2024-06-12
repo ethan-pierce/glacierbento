@@ -53,9 +53,21 @@ def test_calc_pressure(dds):
 
     assert_array_equal(N, Pi - Pw)
 
-def test_calc_dhdt(dds):
-    dhdt = dds._calc_dhdt(dds._fields['hydraulic_potential'].value, dds._fields['sheet_thickness'].value)
+def test_calc_discharge(dds):
+    Q = dds.calc_discharge(
+        dds._fields['hydraulic_potential'].value,
+        jnp.ones(dds._grid.number_of_nodes) * 1e-3
+    )
 
-    assert_array_almost_equal(dhdt, np.full(dds._grid.number_of_nodes, 1.584e-9), decimal = 12)
+    assert_array_almost_equal(Q[:3], [-2.3295, -0.1656, -0.0748], decimal = 4)
 
+def test_run_one_step(dds):
+    for i in range(10):
+        dds = dds.run_one_step(1)
 
+        import matplotlib.pyplot as plt
+        plt.imshow(
+            dds._fields['hydraulic_potential'].value.reshape(3, 10)
+        )
+        plt.colorbar()
+        plt.show()

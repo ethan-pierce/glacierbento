@@ -228,8 +228,9 @@ class StaticGrid(eqx.Module):
             adj = self.adjacent_nodes_at_node[i]
 
             for j in adj[adj != -1]:
-                link = np.intersect1d(self.links_at_node[i], self.links_at_node[j])
-                link = int(link[link != -1])
+                links = np.intersect1d(self.links_at_node[i], self.links_at_node[j])
+                links_sorted = np.sort(links)
+                link = int(links_sorted[-1])
 
                 link_between_nodes[i, j] = link
 
