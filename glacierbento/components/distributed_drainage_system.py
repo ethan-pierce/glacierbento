@@ -42,7 +42,9 @@ class DistributedDrainageSystem(Component):
             'ice_thickness': 'node',
             'bed_elevation': 'node',
             'sliding_velocity': 'node',
-            'melt_input': 'node'
+            'melt_input': 'node',
+            'hydraulic_potential': 'node',
+            'sheet_flow_height': 'node'
         },
         default_parameters = {
             'gravity': 9.81,
@@ -60,26 +62,12 @@ class DistributedDrainageSystem(Component):
         """Initialize the DistributedDrainageSystem."""
         super().__init__(grid, fields, params, required_fields, default_parameters)
 
-        initial_potential = (
-            self._params['ice_density'] 
-            * self._params['gravity'] 
-            * self._fields['ice_thickness'].value
-            * 0.8
-        )
-
         self.link_between_nodes = self._grid.build_link_between_nodes_array()
+
         self.boundary_tags = self._set_inflow_outflow(
             self._fields['bed_elevation'].value
             * self._params['water_density']
             * self._params['gravity']
-        )
-
-        self._fields['hydraulic_potential'] = Field(
-            'hydraulic_potential', initial_potential, 'Pa', 'node'
-        )
-
-        self._fields['sheet_thickness'] = Field(
-            'sheet_thickness', jnp.zeros(grid.number_of_nodes), 'm', 'node'
         )
 
     def _set_inflow_outflow(self, potential: jnp.array) -> jnp.array:
@@ -102,7 +90,7 @@ class DistributedDrainageSystem(Component):
 
         return inflow_outflow
 
-    def _calc_dhdt(self, hydraulic_potential: jnp.ndarray, sheet_thickness: jnp.ndarray):
+    def _calc_dhdt(self, hydraulic_potential: jnp.ndarray, sheet_flow_height: jnp.ndarray):
         """Calculate the rate of change of the thickness of sheet flow."""
         N = self.calc_effective_pressure(hydraulic_potential)
         ub = self._fields['sliding_velocity'].value
@@ -111,16 +99,16 @@ class DistributedDrainageSystem(Component):
             jnp.abs(ub) 
             / self._params['cavity_spacing']
             * jnp.where(
-                sheet_thickness >= self._params['bed_bump_height'],
-                jnp.zeros_like(sheet_thickness),
-                self._params['bed_bump_height'] - sheet_thickness
+                sheet_flow_height >= self._params['bed_bump_height'],
+                jnp.zeros_like(sheet_flow_height),
+                self._params['bed_bump_height'] - sheet_flow_height
             )
         )
 
         closure = (
             (2 / self._params['ice_flow_n']**self._params['ice_flow_n'])
             * self._params['ice_flow_coeff']
-            * sheet_thickness
+            * sheet_flow_height
             * jnp.abs(N)**(self._params['ice_flow_n'] - 1)
             * N
         )
@@ -128,7 +116,7 @@ class DistributedDrainageSystem(Component):
         return opening - closure
 
     def _get_coeffs_at_link(
-        self, cell: int, j: int, hydraulic_potential: jnp.array, sheet_thickness: jnp.array
+        self, cell: int, j: int, hydraulic_potential: jnp.array, sheet_flow_height: jnp.array
     ):
         """Get the coefficients of the linear system at the link between a cell and neighboring node 'j'."""
         i = self._grid.node_at_cell[cell]
@@ -137,7 +125,7 @@ class DistributedDrainageSystem(Component):
         face_len = self._grid.length_of_face[self._grid.face_at_link[link]]
 
         sheet_flux = (
-            self.calc_discharge(hydraulic_potential, sheet_thickness)[link]
+            self.calc_discharge(hydraulic_potential, sheet_flow_height)[link]
             * face_len
             / link_len
         )
@@ -149,14 +137,14 @@ class DistributedDrainageSystem(Component):
         )
 
     def _assemble_row(
-        self, cell: int, hydraulic_potential: jnp.array, sheet_thickness: jnp.array, 
+        self, cell: int, hydraulic_potential: jnp.array, sheet_flow_height: jnp.array, 
     ) -> tuple:
         """Assemble the matrix entries and any addition to the forcing vector at one cell."""
         i = self._grid.node_at_cell[cell]
         adj_nodes = self._grid.adjacent_nodes_at_node[i]
 
         get_coeffs = jax.vmap(
-            lambda j: self._get_coeffs_at_link(cell, j, hydraulic_potential, sheet_thickness)
+            lambda j: self._get_coeffs_at_link(cell, j, hydraulic_potential, sheet_flow_height)
         )
 
         coeffs = jnp.where(
@@ -204,10 +192,10 @@ class DistributedDrainageSystem(Component):
         return (forcing, row)
 
     def _build_forcing_vector(
-        self, hydraulic_potential: jnp.array, sheet_thickness: jnp.array,
+        self, hydraulic_potential: jnp.array, sheet_flow_height: jnp.array,
     ):
         """Calculate the forcing vector for potential at grid cells."""
-        dhdt = self._calc_dhdt(hydraulic_potential, sheet_thickness)
+        dhdt = self._calc_dhdt(hydraulic_potential, sheet_flow_height)
         m = self._fields['melt_input'].value
         
         forcing_at_nodes = m - dhdt
@@ -215,23 +203,23 @@ class DistributedDrainageSystem(Component):
         return forcing_at_nodes[self._grid.node_at_cell]
 
     def _assemble_linear_system(
-        self, hydraulic_potential: jnp.ndarray, sheet_thickness: jnp.ndarray
+        self, hydraulic_potential: jnp.ndarray, sheet_flow_height: jnp.ndarray
     ) -> tuple:
         """Assemble the linear system and forcing vector for the elliptic PDE for potential."""
         forcing, matrix = jax.vmap(self._assemble_row, in_axes = (0, None, None))(
             jnp.arange(self._grid.number_of_cells),
             hydraulic_potential,
-            sheet_thickness
+            sheet_flow_height
         )
 
-        base_forcing = self._build_forcing_vector(hydraulic_potential, sheet_thickness)
+        base_forcing = self._build_forcing_vector(hydraulic_potential, sheet_flow_height)
         forcing = jnp.add(forcing, base_forcing)
 
         return forcing, matrix
 
-    def _solve_for_potential(self, hydraulic_potential: jnp.ndarray, sheet_thickness: jnp.ndarray):
+    def _solve_for_potential(self, hydraulic_potential: jnp.ndarray, sheet_flow_height: jnp.ndarray):
         """Solve for potential from the previous step's potential and sheet thickness."""
-        b, A = self._assemble_linear_system(hydraulic_potential, sheet_thickness)
+        b, A = self._assemble_linear_system(hydraulic_potential, sheet_flow_height)
         operator = lx.MatrixLinearOperator(A)
         solution = lx.linear_solve(operator, b)
 
@@ -247,13 +235,13 @@ class DistributedDrainageSystem(Component):
             base_potential
         )
 
-    def _update_sheet_thickness(
-        self, dt: float, hydraulic_potential: jnp.ndarray, sheet_thickness: jnp.ndarray
+    def _update_sheet_flow_height(
+        self, dt: float, hydraulic_potential: jnp.ndarray, sheet_flow_height: jnp.ndarray
     ):
         """Update the thickness of the sheet flow."""
-        residual = lambda h, _: h - sheet_thickness - dt * self._calc_dhdt(hydraulic_potential, h)
+        residual = lambda h, _: h - sheet_flow_height - dt * self._calc_dhdt(hydraulic_potential, h)
         solver = optx.Newton(rtol = 1e-6, atol = 1e-6)
-        solution = optx.root_find(residual, solver, sheet_thickness, args = None)
+        solution = optx.root_find(residual, solver, sheet_flow_height, args = None)
 
         return jnp.where(
             self.boundary_tags == 0,
@@ -271,13 +259,13 @@ class DistributedDrainageSystem(Component):
         )
         return overburden - water_pressure
 
-    def calc_discharge(self, hydraulic_potential: jnp.ndarray, sheet_thickness: jnp.ndarray):
+    def calc_discharge(self, hydraulic_potential: jnp.ndarray, sheet_flow_height: jnp.ndarray):
         """Calculate the discharge through the sheet flow on grid links."""
         k = self._params['sheet_conductivity']
         a = self._params['flow_exp_a']
         b = self._params['flow_exp_b']
         grad_phi = self._grid.calc_grad_at_link(hydraulic_potential)
-        h_at_links = self._grid.map_mean_of_link_nodes_to_link(sheet_thickness)
+        h_at_links = self._grid.map_mean_of_link_nodes_to_link(sheet_flow_height)
 
         return (
             -k
@@ -288,8 +276,8 @@ class DistributedDrainageSystem(Component):
 
     def run_one_step(self, dt: float):
         """Advance the model by one time step."""
-        updated_thickness = self._update_sheet_thickness(
-            dt, self._fields['hydraulic_potential'].value, self._fields['sheet_thickness'].value
+        updated_thickness = self._update_sheet_flow_height(
+            dt, self._fields['hydraulic_potential'].value, self._fields['sheet_flow_height'].value
         )
 
         updated_potential = self._solve_for_potential(
@@ -297,7 +285,7 @@ class DistributedDrainageSystem(Component):
         )
 
         return eqx.tree_at(
-            lambda t: (t._fields['hydraulic_potential'].value, t._fields['sheet_thickness'].value),
+            lambda t: (t._fields['hydraulic_potential'].value, t._fields['sheet_flow_height'].value),
             self,
             (updated_potential, updated_thickness)
         )
@@ -305,6 +293,6 @@ class DistributedDrainageSystem(Component):
     def get_output(self) -> dict:
         """Return the output field(s) of the model."""
         return {
-            'hydraulic_potential': self._fields['hydraulic_potential'], 
-            'sheet_thickness': self._fields['sheet_thickness']
+            'hydraulic_potential': self._fields['hydraulic_potential'].value, 
+            'sheet_flow_height': self._fields['sheet_flow_height'].value
         }
