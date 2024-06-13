@@ -43,7 +43,7 @@ class DistributedDrainageSystem(Component):
             'bed_elevation': 'node',
             'sliding_velocity': 'node',
             'melt_input': 'node',
-            'hydraulic_potential': 'node',
+            'potential': 'node',
             'sheet_flow_height': 'node'
         },
         default_parameters = {
@@ -90,9 +90,9 @@ class DistributedDrainageSystem(Component):
 
         return inflow_outflow
 
-    def _calc_dhdt(self, hydraulic_potential: jnp.ndarray, sheet_flow_height: jnp.ndarray):
+    def _calc_dhdt(self, potential: jnp.ndarray, sheet_flow_height: jnp.ndarray):
         """Calculate the rate of change of the thickness of sheet flow."""
-        N = self.calc_effective_pressure(hydraulic_potential)
+        N = self.calc_effective_pressure(potential)
         ub = self._fields['sliding_velocity'].value
 
         opening = (
@@ -116,7 +116,7 @@ class DistributedDrainageSystem(Component):
         return opening - closure
 
     def _get_coeffs_at_link(
-        self, cell: int, j: int, hydraulic_potential: jnp.array, sheet_flow_height: jnp.array
+        self, cell: int, j: int, potential: jnp.array, sheet_flow_height: jnp.array
     ):
         """Get the coefficients of the linear system at the link between a cell and neighboring node 'j'."""
         i = self._grid.node_at_cell[cell]
@@ -125,7 +125,7 @@ class DistributedDrainageSystem(Component):
         face_len = self._grid.length_of_face[self._grid.face_at_link[link]]
 
         sheet_flux = (
-            self.calc_discharge(hydraulic_potential, sheet_flow_height)[link]
+            self.calc_discharge(potential, sheet_flow_height)[link]
             * face_len
             / link_len
         )
@@ -137,14 +137,14 @@ class DistributedDrainageSystem(Component):
         )
 
     def _assemble_row(
-        self, cell: int, hydraulic_potential: jnp.array, sheet_flow_height: jnp.array, 
+        self, cell: int, potential: jnp.array, sheet_flow_height: jnp.array, 
     ) -> tuple:
         """Assemble the matrix entries and any addition to the forcing vector at one cell."""
         i = self._grid.node_at_cell[cell]
         adj_nodes = self._grid.adjacent_nodes_at_node[i]
 
         get_coeffs = jax.vmap(
-            lambda j: self._get_coeffs_at_link(cell, j, hydraulic_potential, sheet_flow_height)
+            lambda j: self._get_coeffs_at_link(cell, j, potential, sheet_flow_height)
         )
 
         coeffs = jnp.where(
@@ -192,10 +192,10 @@ class DistributedDrainageSystem(Component):
         return (forcing, row)
 
     def _build_forcing_vector(
-        self, hydraulic_potential: jnp.array, sheet_flow_height: jnp.array,
+        self, potential: jnp.array, sheet_flow_height: jnp.array,
     ):
         """Calculate the forcing vector for potential at grid cells."""
-        dhdt = self._calc_dhdt(hydraulic_potential, sheet_flow_height)
+        dhdt = self._calc_dhdt(potential, sheet_flow_height)
         m = self._fields['melt_input'].value
         
         forcing_at_nodes = m - dhdt
@@ -203,23 +203,23 @@ class DistributedDrainageSystem(Component):
         return forcing_at_nodes[self._grid.node_at_cell]
 
     def _assemble_linear_system(
-        self, hydraulic_potential: jnp.ndarray, sheet_flow_height: jnp.ndarray
+        self, potential: jnp.ndarray, sheet_flow_height: jnp.ndarray
     ) -> tuple:
         """Assemble the linear system and forcing vector for the elliptic PDE for potential."""
         forcing, matrix = jax.vmap(self._assemble_row, in_axes = (0, None, None))(
             jnp.arange(self._grid.number_of_cells),
-            hydraulic_potential,
+            potential,
             sheet_flow_height
         )
 
-        base_forcing = self._build_forcing_vector(hydraulic_potential, sheet_flow_height)
+        base_forcing = self._build_forcing_vector(potential, sheet_flow_height)
         forcing = jnp.add(forcing, base_forcing)
 
         return forcing, matrix
 
-    def _solve_for_potential(self, hydraulic_potential: jnp.ndarray, sheet_flow_height: jnp.ndarray):
+    def _solve_for_potential(self, potential: jnp.ndarray, sheet_flow_height: jnp.ndarray):
         """Solve for potential from the previous step's potential and sheet thickness."""
-        b, A = self._assemble_linear_system(hydraulic_potential, sheet_flow_height)
+        b, A = self._assemble_linear_system(potential, sheet_flow_height)
         operator = lx.MatrixLinearOperator(A)
         solution = lx.linear_solve(operator, b)
 
@@ -232,14 +232,14 @@ class DistributedDrainageSystem(Component):
         return jnp.where(
             self._grid.cell_at_node != -1,
             solution.value[self._grid.cell_at_node],
-            base_potential
+            0.0
         )
 
     def _update_sheet_flow_height(
-        self, dt: float, hydraulic_potential: jnp.ndarray, sheet_flow_height: jnp.ndarray
+        self, dt: float, potential: jnp.ndarray, sheet_flow_height: jnp.ndarray
     ):
         """Update the thickness of the sheet flow."""
-        residual = lambda h, _: h - sheet_flow_height - dt * self._calc_dhdt(hydraulic_potential, h)
+        residual = lambda h, _: h - sheet_flow_height - dt * self._calc_dhdt(potential, h)
         solver = optx.Newton(rtol = 1e-6, atol = 1e-6)
         solution = optx.root_find(residual, solver, sheet_flow_height, args = None)
 
@@ -249,26 +249,26 @@ class DistributedDrainageSystem(Component):
             0.0
         )
 
-    def calc_effective_pressure(self, hydraulic_potential: jnp.ndarray):
+    def calc_effective_pressure(self, potential: jnp.ndarray):
         """Calculate effective pressure from the hydraulic potential."""
         H = self._fields['ice_thickness'].value
         b = self._fields['bed_elevation'].value
         overburden = self._params['ice_density'] * self._params['gravity'] * H
         water_pressure = (
-            hydraulic_potential - self._params['water_density'] * self._params['gravity'] * b
+            potential - self._params['water_density'] * self._params['gravity'] * b
         )
         return overburden - water_pressure
 
-    def calc_discharge(self, hydraulic_potential: jnp.ndarray, sheet_flow_height: jnp.ndarray):
+    def calc_discharge(self, potential: jnp.ndarray, sheet_flow_height: jnp.ndarray):
         """Calculate the discharge through the sheet flow on grid links."""
         k = self._params['sheet_conductivity']
         a = self._params['flow_exp_a']
         b = self._params['flow_exp_b']
-        grad_phi = self._grid.calc_grad_at_link(hydraulic_potential)
+        grad_phi = self._grid.calc_grad_at_link(potential)
         h_at_links = self._grid.map_mean_of_link_nodes_to_link(sheet_flow_height)
 
         return (
-            -k
+            k
             * h_at_links**a
             * jnp.abs(grad_phi)**b
             * grad_phi
@@ -277,15 +277,15 @@ class DistributedDrainageSystem(Component):
     def run_one_step(self, dt: float):
         """Advance the model by one time step."""
         updated_thickness = self._update_sheet_flow_height(
-            dt, self._fields['hydraulic_potential'].value, self._fields['sheet_flow_height'].value
+            dt, self._fields['potential'].value, self._fields['sheet_flow_height'].value
         )
 
         updated_potential = self._solve_for_potential(
-            self._fields['hydraulic_potential'].value, updated_thickness
+            self._fields['potential'].value, updated_thickness
         )
 
         return eqx.tree_at(
-            lambda t: (t._fields['hydraulic_potential'].value, t._fields['sheet_flow_height'].value),
+            lambda t: (t._fields['potential'].value, t._fields['sheet_flow_height'].value),
             self,
             (updated_potential, updated_thickness)
         )
@@ -293,6 +293,6 @@ class DistributedDrainageSystem(Component):
     def get_output(self) -> dict:
         """Return the output field(s) of the model."""
         return {
-            'hydraulic_potential': self._fields['hydraulic_potential'].value, 
+            'potential': self._fields['potential'].value, 
             'sheet_flow_height': self._fields['sheet_flow_height'].value
         }

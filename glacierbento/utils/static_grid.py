@@ -40,7 +40,11 @@ def freeze_grid(grid: ModelGrid):
 
 
 class StaticGrid(eqx.Module):
-    """Stores a computational mesh and provides methods to map between elements."""
+    """Stores a computational mesh and provides methods to map between elements.
+    
+    See also: 
+        freeze_grid(ModelGrid): a utility that converts a Landlab grid to a StaticGrid.
+    """
 
     # Density of grid elements
     shape: tuple = eqx.field(converter = tuple)
@@ -220,7 +224,7 @@ class StaticGrid(eqx.Module):
         
     def build_link_between_nodes_array(self):
         """Construct an array of links connecting each pair of nodes."""
-        # This function is not compatible with JIT operations.abs
+        # This function is not compatible with JIT operations
 
         link_between_nodes = np.full((self.number_of_nodes, self.number_of_nodes), -1)
 

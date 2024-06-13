@@ -1,98 +1,52 @@
-"""Define a common interface for model components."""
+"""Define a common interface for Components.
 
-import jax.numpy as jnp
+Components are self-contained process models that return output fields when the
+run_one_step() method is called. It may help to think of each Component as being
+responsible for one equation in a paper or textbook. Specific Components should
+extend the base class here with the necessary logic for the process they model.
+Consider adding citations to the docstrings of Components to properly attribute
+the source of the equation(s) being implemented.
+"""
+
 import equinox as eqx
 from abc import abstractmethod
-from glacierbento.utils.core import Field
-from glacierbento.utils.static_grid import StaticGrid
-
-
-def check_location(grid, array) -> str:
-    """Check which set of grid elements matches the size of an array-like."""
-    if len(array) == grid.number_of_nodes:
-        return "node"
-    elif len(array) == grid.number_of_links:
-        return "link"
-    elif len(array) == grid.number_of_patches:
-        return "patch"
-    elif len(array) == grid.number_of_corners:
-        return "corner"
-    elif len(array) == grid.number_of_faces:
-        return "face"
-    elif len(array) == grid.number_of_cells:
-        return "cell"
-    else:
-        raise ValueError("Array size does not match any grid elements.")
-
+from glacierbento.utils import Field, StaticGrid
 
 class Component(eqx.Module):
     """Components are individual process models with a common interface.
     
-    Every Component has to fulfill the following contract: given a grid and a
-    specific set of fields defined on elements of that grid, the Component will
-    provide an run_one_step() method that calculates some output field. For time-
-    independent processes, the run_one_step() method should not accept any 
-    arguments; for time-dependent processes, the run_one_step() method should 
-    accept a float indicating the size of the desired time step.
-
-    Specific Components that inherit from this class *must* write default values 
-    for required fields and default parameters in the class definition. Where
-    appropriate, Components should also cite a source paper in their docstring.
-    
-    Components will be created and destroyed many times during the typical
-    lifetime of a Model, so it is important to keep any required setup as
-    minimal as possible. If there are expensive operations, consider creating
-    another Component to handle those processes and e.g., saving the result as
-    a Field that the Model can pass to the main Component on initialization.
+    Every Component has to provide a run_one_step() method that accepts all
+    required input fields and returns all output fields. By convention, the
+    first argument to run_one_step() should be the time step, dt. Additionally, 
+    each Component should provide reasonable default values for parameters in
+    its __init__() method.
 
     Attributes:
         grid: The StaticGrid object that the Component operates on.
-        fields: A dictionary of Field objects or Arrays.
-        required_fields: A dictionary with {names: locations} of required fields.
+        input_fields: A dictionary with {names: locations} of required fields.
+        output_fields: A dictionary with {names: locations} of output fields.
         params: A dictionary of parameters.
     
     Methods:
+        update_param: Update the value of a parameter.
         run_one_step: Advance the model by one time step.
-        get_output: Return the output field(s) of the model.
     """
 
-    _grid: StaticGrid
-    _fields: dict
-    _params: dict
-    required_fields: dict
+    grid: StaticGrid
+    input_fields: dict[str, str]
+    output_fields: dict[str, str]
+    params: dict[str, float]
 
-    def __init__(self, grid, fields, params = {}, required_fields = {}, default_parameters = {}):
-        """Initialize the Component."""
-        self._grid = grid
-        self.required_fields = required_fields
+    def __init__(self, params: dict = {}):
+        """Initialize the Component with fields and parameters."""
+        for key, val in params.items():
+            self.params[key] = val
 
-        self._fields = {}
-        for var, field in fields.items():
-            try:
-                loc = field.location
-            except:
-                loc = check_location(self._grid, field)
-                field = Field(var, jnp.asarray(field), units = '', location = loc)
-                
-            self._fields[var] = field
-
-        for field, loc in self.required_fields.items():
-            if field not in self._fields.keys():
-                raise ValueError(f"Field {field} is required but not provided.")
-            if self._fields[field].location != loc:
-                raise ValueError(f"Field {field} must be defined on grid element: {loc}.")
-
-        self._params = default_parameters
-        for key, value in params.items():
-            self._params[key] = value
-
+    def update_param(self, param: str, new_value: float) -> None:
+        """Update the value of a parameter."""
+        self.params[param] = new_value
 
     @abstractmethod
-    def run_one_step(self):
-        """Run one time step of the Component."""
-        pass
-
-    @abstractmethod
-    def get_output(self):
-        """Return the output field(s) of the Component."""
+    def run_one_step(self, dt: float, input_fields: dict) -> dict[str, Field]:
+        """Advance the model by one time step."""
         pass
