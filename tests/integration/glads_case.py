@@ -56,29 +56,36 @@ def assemble_row(cell):
     row = jnp.zeros(grid.number_of_cells)
     node = grid.node_at_cell[cell]
     for link in grid.links_at_node[node]:
-        # TODO link != -1 condition needs to go here
-
-        adj = jnp.where(
-            grid.node_at_link_head[link] == node, 
-            grid.node_at_link_tail[link], 
-            grid.node_at_link_head[link]
+        jax.lax.cond(
+            link == -1,
+            lambda link: None,
+            add_valid,
+            link
         )
 
-        condition = jnp.argwhere(
-            jnp.array([
-                link == -1, 
-                is_dirichlet[adj], 
-                is_neumann[adj], 
-                grid.status_at_node[adj] == 0
-            ], size = 1)
-        ).squeeze()
+        def add_valid(link):
+            adj = jnp.where(
+                grid.node_at_link_head[link] == node, 
+                grid.node_at_link_tail[link], 
+                grid.node_at_link_head[link]
+            )
 
-        jax.lax.switch(condition, [lambda: None, add_dirichlet, add_neumann, add_interior])
+            condition = jnp.argwhere(
+                jnp.array([
+                    link == -1, 
+                    is_dirichlet[adj], 
+                    is_neumann[adj], 
+                    grid.status_at_node[adj] == 0
+                ], size = 1)
+            ).squeeze()
 
-        def add_dirichlet(link):
-            row.at[adj].set()
+            jax.lax.switch(condition, [lambda: None, add_dirichlet, add_neumann, add_interior])
 
+            def add_dirichlet(link):
+                row.at[adj].set()
 
+def assemble_matrix():
+    return jax.vmap(assemble_row)(jnp.arange(grid.number_of_cells))
 
 def residual(phi, h):
     h_at_links = grid.map_mean_of_link_nodes_to_link(h)
