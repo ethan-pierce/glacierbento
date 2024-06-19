@@ -48,42 +48,52 @@ class MatrixAssembler:
             self.grid.node_at_link_head[link]
         )
 
-    def add_dirichlet(self, cell, link, row, forcing):
+    def add_dirichlet(self, args):
         """Add coefficients from a link that extends to a fixed-value node."""
+        cell, link, forcing, row = args
         adj_node = self.get_adjacent_node(cell, link)
         face = self.grid.face_at_link[link]
         row = row.at[cell].add(-self.coeffs[face])
         forcing = forcing.at[cell].add(self.coeffs[face] * self.boundary_values[adj_node])
+        return forcing, row
 
-    def add_interior(self, cell, link, row):
+    def add_interior(self, args):
         """Add coefficients from a link that extends to an interior node."""
+        cell, link, forcing, row = args
         adj_node = self.get_adjacent_node(cell, link)
         adj_cell = self.grid.cell_at_node[adj_node]
         face = self.grid.face_at_link[link]
         row = row.at[cell].add(-self.coeffs[face])
         row = row.at[adj_cell].add(self.coeffs[face])
-        
-    def add_valid(self, cell, link, row, forcing):
+        return forcing, row
+
+    def add_valid(self, args):
         """Given a link, dispatch the correct row modification."""
-        jax.lax.cond(
+        cell, link, forcing, row = args
+        forcing, row = jax.lax.cond(
             self.grid.status_at_node[self.get_adjacent_node(cell, link)] == 0,
-            lambda: self.add_interior(cell, link, row),
-            lambda: jax.lax.cond(
-                    self.is_fixed_value[self.get_adjacent_node(cell, link)] == 1,
-                    lambda: self.add_dirichlet(cell, link, row, forcing),
-                    lambda: None
-                )
-            )
+            lambda args: self.add_interior(args),
+            lambda args: jax.lax.cond(
+                self.is_fixed_value[self.get_adjacent_node(cell, link)] == 1,
+                lambda args: self.add_dirichlet(args),
+                lambda args: (forcing, row),
+                args
+            ),
+            args
+        )
+        return forcing, row
 
     def assemble_row(self, forcing, cell):
         """Assemble one row of the matrix."""
         row = jnp.zeros(self.grid.number_of_cells)
         node = self.grid.node_at_cell[cell]
         for link in self.grid.links_at_node[node]:
-            jax.lax.cond(
+            args = (cell, link, forcing, row)
+            forcing, row = jax.lax.cond(
                 link == -1,
-                lambda: None,
-                lambda: self.add_valid(cell, link, row, forcing)
+                lambda args: (forcing, row),
+                lambda args: self.add_valid(args),
+                args
             )
 
         return forcing, row
