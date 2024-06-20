@@ -23,14 +23,13 @@ import jax.numpy as jnp
 import equinox as eqx
 import lineax as lx
 import optimistix as optx
-from glacierbento.utils import Field
+from glacierbento.utils import Field, MatrixAssembler
 from glacierbento.components import Component
 
 
 class DistributedDrainageSystem(Component):
     """Model a distributed subglacial drainage system."""
 
-    link_between_nodes: jax.Array = eqx.field(converter = jnp.asarray, init = False)
     boundary_tags: jax.Array = eqx.field(converter = jnp.asarray, init = False)
 
     def __init__(
@@ -61,8 +60,6 @@ class DistributedDrainageSystem(Component):
     ):
         """Initialize the DistributedDrainageSystem."""
         super().__init__(grid, fields, params, required_fields, default_parameters)
-
-        self.link_between_nodes = self._grid.build_link_between_nodes_array()
 
         self.boundary_tags = self._set_inflow_outflow(
             self._fields['bed_elevation'].value
@@ -115,106 +112,36 @@ class DistributedDrainageSystem(Component):
 
         return opening - closure
 
-    def _get_coeffs_at_link(
-        self, cell: int, j: int, potential: jnp.array, sheet_flow_height: jnp.array
-    ):
-        """Get the coefficients of the linear system at the link between a cell and neighboring node 'j'."""
-        i = self._grid.node_at_cell[cell]
-        link = self.link_between_nodes[i, j]
-        link_len = self._grid.length_of_link[link]
-        face_len = self._grid.length_of_face[self._grid.face_at_link[link]]
+    def _calc_coeffs(self, sheet_flow_height: jnp.ndarray):
+        """Calculate the coefficients for the finite volume matrix."""
+        k = self._params['sheet_conductivity']
+        a = self._params['flow_exp_a']
+        h_at_links = self.grid.map_mean_of_link_nodes_to_link(sheet_flow_height)
+        h_at_faces = h_at_links[self.grid.link_at_face]
 
-        sheet_flux = (
-            self.calc_discharge(potential, sheet_flow_height)[link]
-            * face_len
-            / link_len
+        return (
+            self.grid.length_of_face / self.grid.length_of_link[self.grid.link_at_face] 
+            * -k * h_at_faces**a
         )
 
-        return jnp.where(
-            self._grid.status_at_link[link] == 0,
-            sheet_flux,
-            0.0
-        )
-
-    def _assemble_row(
-        self, cell: int, potential: jnp.array, sheet_flow_height: jnp.array, 
-    ) -> tuple:
-        """Assemble the matrix entries and any addition to the forcing vector at one cell."""
-        i = self._grid.node_at_cell[cell]
-        adj_nodes = self._grid.adjacent_nodes_at_node[i]
-
-        get_coeffs = jax.vmap(
-            lambda j: self._get_coeffs_at_link(cell, j, potential, sheet_flow_height)
-        )
-
-        coeffs = jnp.where(
-            adj_nodes != -1,
-            get_coeffs(adj_nodes),
-            0.0
-        )
-
-        base_potential = (
-            self._fields['bed_elevation'].value
-            * self._params['water_density']
-            * self._params['gravity']
-        )
-
-        added_forcings = jnp.where(
-            (self.boundary_tags[adj_nodes] == -1) & (adj_nodes != -1),
-            -coeffs * base_potential[adj_nodes],
-            0.0
-        )
-
-        forcing = jnp.sum(added_forcings)
-        
-        empty_row = jnp.zeros(self._grid.number_of_cells)
-
-        def assign_coeffs(row, jidx):
-            j = adj_nodes[jidx]
-            jcell = self._grid.cell_at_node[j]
-
-            # If jcell != -1, it is an interior cell
-            # If jcell == -1, it is a boundary cell
-            # but recall that the coefficients at Neumann boundaries are always zero
-            row = jnp.where(
-                jcell != -1,
-                row.at[jcell].add(coeffs[jidx]).at[cell].add(-coeffs[jidx]),
-                row.at[cell].add(-coeffs[jidx])
-            )
-            return row, None
-
-        row, _ = jax.lax.scan(
-            assign_coeffs,
-            empty_row,
-            jnp.arange(len(adj_nodes))
-        )
-    
-        return (forcing, row)
-
-    def _build_forcing_vector(
-        self, potential: jnp.array, sheet_flow_height: jnp.array,
-    ):
-        """Calculate the forcing vector for potential at grid cells."""
+    def _build_forcing_vector(self, potential: jnp.ndarray, sheet_flow_height: jnp.ndarray):
+        """Build the forcing vector for the potential field."""
         dhdt = self._calc_dhdt(potential, sheet_flow_height)
-        m = self._fields['melt_input'].value
-        
-        forcing_at_nodes = m - dhdt
-
-        return forcing_at_nodes[self._grid.node_at_cell]
-
-    def _assemble_linear_system(
-        self, potential: jnp.ndarray, sheet_flow_height: jnp.ndarray
-    ) -> tuple:
-        """Assemble the linear system and forcing vector for the elliptic PDE for potential."""
-        forcing, matrix = jax.vmap(self._assemble_row, in_axes = (0, None, None))(
-            jnp.arange(self._grid.number_of_cells),
-            potential,
-            sheet_flow_height
+        return (
+            (self._fields['melt_input'].value - dhdt) * self._grid.cell_area_at_node
         )
 
-        base_forcing = self._build_forcing_vector(potential, sheet_flow_height)
-        forcing = jnp.add(forcing, base_forcing)
+    def _assemble_linear_system(self, potential: jnp.ndarray, sheet_flow_height: jnp.ndarray):
+        """Assemble the linear system for the potential field."""
+        coeffs = self._calc_coeffs(sheet_flow_height)
+        forcing = self._build_forcing_vector(potential, sheet_flow_height)
+        is_fixed_value = jnp.where(self.boundary_tags == 1, 1, 0)
 
+        assembler = MatrixAssembler(
+            self.grid, coeffs, forcing, jnp.zeros(self.grid.number_of_nodes), is_fixed_value
+        )
+
+        forcing, matrix = assembler.assemble_matrix()
         return forcing, matrix
 
     def _solve_for_potential(self, potential: jnp.ndarray, sheet_flow_height: jnp.ndarray):
@@ -290,9 +217,3 @@ class DistributedDrainageSystem(Component):
             (updated_potential, updated_thickness)
         )
         
-    def get_output(self) -> dict:
-        """Return the output field(s) of the model."""
-        return {
-            'potential': self._fields['potential'].value, 
-            'sheet_flow_height': self._fields['sheet_flow_height'].value
-        }

@@ -30,26 +30,24 @@ def test_get_adjacent_node(grid, assembler):
 
 def test_assemble_matrix(grid, assembler):
     forcing, matrix = assembler.assemble_matrix()
-    print(forcing)
-    print(matrix)
-
+    
     assert forcing.shape == (grid.number_of_cells,)
     expected_forcing = np.zeros(grid.number_of_cells)
-    expected_forcing[:3] = 1
-    # assert_array_equal(forcing, expected_forcing)
+    expected_forcing[:3] = -1
+    assert_array_equal(forcing, expected_forcing)
 
     assert matrix.shape == (grid.number_of_cells, grid.number_of_cells)
     assert_array_equal(
-        (matrix != 0).astype(int),
+        matrix,
         np.array([
-            [1, 1, 0, 1, 0, 0, 0, 0, 0],
-            [1, 1, 1, 0, 1, 0, 0, 0, 0],
-            [0, 1, 1, 0, 0, 1, 0, 0, 0],
-            [1, 0, 0, 1, 1, 0, 1, 0, 0],
-            [0, 1, 0, 1, 1, 1, 0, 1, 0],
-            [0, 0, 1, 0, 1, 1, 0, 0, 1],
-            [0, 0, 0, 1, 0, 0, 1, 1, 0],
-            [0, 0, 0, 0, 1, 0, 1, 1, 1],
-            [0, 0, 0, 0, 0, 1, 0, 1, 1]
+            [3, -1, 0, -1, 0, 0, 0, 0, 0],
+            [-1, 4, -1, 0, -1, 0, 0, 0, 0],
+            [0, -1, 3, 0, 0, -1, 0, 0, 0],
+            [-1, 0, 0, 3, -1, 0, -1, 0, 0],
+            [0, -1, 0, -1, 4, -1, 0, -1, 0],
+            [0, 0, -1, 0, -1, 3, 0, 0, -1],
+            [0, 0, 0, -1, 0, 0, 2, -1, 0],
+            [0, 0, 0, 0, -1, 0, -1, 3, -1],
+            [0, 0, 0, 0, 0, -1, 0, -1, 2]
         ])
     )
