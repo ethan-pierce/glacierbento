@@ -30,14 +30,10 @@ from glacierbento.components import Component
 class DistributedDrainageSystem(Component):
     """Model a distributed subglacial drainage system."""
 
-    boundary_tags: jax.Array = eqx.field(converter = jnp.asarray, init = False)
-
     def __init__(
         self,
         grid,
-        fields,
-        params = {},
-        required_fields = {
+        input_fields = {
             'ice_thickness': 'node',
             'bed_elevation': 'node',
             'sliding_velocity': 'node',
@@ -45,7 +41,11 @@ class DistributedDrainageSystem(Component):
             'potential': 'node',
             'sheet_flow_height': 'node'
         },
-        default_parameters = {
+        output_fields = {
+            'potential': 'node',
+            'sheet_flow_height': 'node'
+        },
+        parameters = {
             'gravity': 9.81,
             'ice_density': 917,
             'water_density': 1000,
@@ -59,16 +59,12 @@ class DistributedDrainageSystem(Component):
         }
     ):
         """Initialize the DistributedDrainageSystem."""
-        super().__init__(grid, fields, params, required_fields, default_parameters)
+        super().__init__(grid, input_fields, output_fields, parameters)
 
-        self.boundary_tags = self._set_inflow_outflow(
-            self._fields['bed_elevation'].value
-            * self._params['water_density']
-            * self._params['gravity']
-        )
-
-    def _set_inflow_outflow(self, potential: jnp.array) -> jnp.array:
+    def _set_inflow_outflow(self, fields: dict[str, Field]) -> jax.Array:
         """Determine whether boundary nodes expect inflow or outflow."""
+        potential = fields['potential'].value
+
         min_adj_potential = jnp.min(
             jnp.where(
                 self._grid.adjacent_nodes_at_node != -1,
@@ -87,133 +83,142 @@ class DistributedDrainageSystem(Component):
 
         return inflow_outflow
 
-    def _calc_dhdt(self, potential: jnp.ndarray, sheet_flow_height: jnp.ndarray):
+    def _calc_dhdt(self, fields: dict[str, Field]) -> jax.Array:
         """Calculate the rate of change of the thickness of sheet flow."""
-        N = self.calc_effective_pressure(potential)
-        ub = self._fields['sliding_velocity'].value
+        sheet_flow_height = fields['sheet_flow_height'].value
+        sliding_velocity = fields['sliding_velocity'].value
+
+        N = self.calc_effective_pressure(fields)
 
         opening = (
-            jnp.abs(ub) 
-            / self._params['cavity_spacing']
+            jnp.abs(sliding_velocity) 
+            / self.params['cavity_spacing']
             * jnp.where(
-                sheet_flow_height >= self._params['bed_bump_height'],
+                sheet_flow_height >= self.params['bed_bump_height'],
                 jnp.zeros_like(sheet_flow_height),
-                self._params['bed_bump_height'] - sheet_flow_height
+                self.params['bed_bump_height'] - sheet_flow_height
             )
         )
 
         closure = (
-            (2 / self._params['ice_flow_n']**self._params['ice_flow_n'])
-            * self._params['ice_flow_coeff']
+            (2 / self.params['ice_flow_n']**self.params['ice_flow_n'])
+            * self.params['ice_flow_coeff']
             * sheet_flow_height
-            * jnp.abs(N)**(self._params['ice_flow_n'] - 1)
+            * jnp.abs(N)**(self.params['ice_flow_n'] - 1)
             * N
         )
 
         return opening - closure
 
-    def _calc_coeffs(self, sheet_flow_height: jnp.ndarray):
+    def _calc_coeffs(self, fields: dict[str, Field]) -> jax.Array:
         """Calculate the coefficients for the finite volume matrix."""
-        k = self._params['sheet_conductivity']
-        a = self._params['flow_exp_a']
-        h_at_links = self.grid.map_mean_of_link_nodes_to_link(sheet_flow_height)
-        h_at_faces = h_at_links[self.grid.link_at_face]
+        sheet_flow_height = fields['sheet_flow_height'].value
+        k = self.params['sheet_conductivity']
+        a = self.params['flow_exp_a']
+
+        h_at_links = self._grid.map_mean_of_link_nodes_to_link(sheet_flow_height)
+        h_at_faces = h_at_links[self._grid.link_at_face]
 
         return (
-            self.grid.length_of_face / self.grid.length_of_link[self.grid.link_at_face] 
+            self._grid.length_of_face / self._grid.length_of_link[self._grid.link_at_face] 
             * -k * h_at_faces**a
         )
 
-    def _build_forcing_vector(self, potential: jnp.ndarray, sheet_flow_height: jnp.ndarray):
+    def _build_forcing_vector(self, fields: dict[str, Field]) -> jax.Array:
         """Build the forcing vector for the potential field."""
-        dhdt = self._calc_dhdt(potential, sheet_flow_height)
-        return (
-            (self._fields['melt_input'].value - dhdt) * self._grid.cell_area_at_node
-        )
+        melt_input = fields['melt_input'].value
+        dhdt = self._calc_dhdt(fields)
+        forcing_at_nodes = melt_input - dhdt
 
-    def _assemble_linear_system(self, potential: jnp.ndarray, sheet_flow_height: jnp.ndarray):
+        return forcing_at_nodes[self._grid.node_at_cell]
+
+    def _assemble_linear_system(self, fields) -> tuple[jax.Array, jax.Array]:
         """Assemble the linear system for the potential field."""
-        coeffs = self._calc_coeffs(sheet_flow_height)
-        forcing = self._build_forcing_vector(potential, sheet_flow_height)
-        is_fixed_value = jnp.where(self.boundary_tags == 1, 1, 0)
+        coeffs = self._calc_coeffs(fields)
+        forcing = self._build_forcing_vector(fields)
+        boundary_tags = self._set_inflow_outflow(fields)
+        is_fixed_value = jnp.where(boundary_tags == 1, 1, 0)
 
         assembler = MatrixAssembler(
-            self.grid, coeffs, forcing, jnp.zeros(self.grid.number_of_nodes), is_fixed_value
+            self._grid, coeffs, forcing, jnp.zeros(self._grid.number_of_nodes), is_fixed_value
         )
 
         forcing, matrix = assembler.assemble_matrix()
         return forcing, matrix
 
-    def _solve_for_potential(self, potential: jnp.ndarray, sheet_flow_height: jnp.ndarray):
+    def _solve_for_potential(self, fields: dict[str, Field]) -> jax.Array:
         """Solve for potential from the previous step's potential and sheet thickness."""
-        b, A = self._assemble_linear_system(potential, sheet_flow_height)
+        b, A = self._assemble_linear_system(fields)
+
         operator = lx.MatrixLinearOperator(A)
         solution = lx.linear_solve(operator, b)
 
-        base_potential = (
-            self._fields['bed_elevation'].value
-            * self._params['water_density']
-            * self._params['gravity']
-        )
+        bed_elevation = fields['bed_elevation'].value
+        base_potential = (bed_elevation * self.params['water_density'] * self.params['gravity'])
 
         return jnp.where(
             self._grid.cell_at_node != -1,
             solution.value[self._grid.cell_at_node],
-            0.0
+            base_potential
         )
 
-    def _update_sheet_flow_height(
-        self, dt: float, potential: jnp.ndarray, sheet_flow_height: jnp.ndarray
-    ):
+    def _update_sheet_flow_height(self, dt: float, fields: dict[str, Field]) -> jax.Array:
         """Update the thickness of the sheet flow."""
-        residual = lambda h, _: h - sheet_flow_height - dt * self._calc_dhdt(potential, h)
+        sheet_flow_height = fields['sheet_flow_height'].value
+
+        residual = lambda h, _: h - sheet_flow_height - dt * self._calc_dhdt(fields)
         solver = optx.Newton(rtol = 1e-6, atol = 1e-6)
         solution = optx.root_find(residual, solver, sheet_flow_height, args = None)
 
-        return jnp.where(
-            self.boundary_tags == 0,
+        updated_sheet_flow = jnp.where(
+            solution.value >= 0,
             solution.value,
             0.0
         )
 
-    def calc_effective_pressure(self, potential: jnp.ndarray):
+        return jnp.where(
+            self._grid.cell_at_node != -1,
+            solution.value,
+            0.0
+        )
+
+    def calc_effective_pressure(self, fields: dict[str, Field]) -> jax.Array:
         """Calculate effective pressure from the hydraulic potential."""
-        H = self._fields['ice_thickness'].value
-        b = self._fields['bed_elevation'].value
-        overburden = self._params['ice_density'] * self._params['gravity'] * H
+        potential = fields['potential'].value
+        bed_elevation = fields['bed_elevation'].value
+        ice_thickness = fields['ice_thickness'].value
+
+        overburden = self.params['ice_density'] * self.params['gravity'] * ice_thickness
         water_pressure = (
-            potential - self._params['water_density'] * self._params['gravity'] * b
+            potential - self.params['water_density'] * self.params['gravity'] * bed_elevation
         )
         return overburden - water_pressure
 
-    def calc_discharge(self, potential: jnp.ndarray, sheet_flow_height: jnp.ndarray):
+    def calc_discharge(self, fields: dict[str, Field]) -> jax.Array:
         """Calculate the discharge through the sheet flow on grid links."""
-        k = self._params['sheet_conductivity']
-        a = self._params['flow_exp_a']
-        b = self._params['flow_exp_b']
+        potential = fields['potential'].value
+        sheet_flow_height = fields['sheet_flow_height'].value
+        k = self.params['sheet_conductivity']
+        a = self.params['flow_exp_a']
+        b = self.params['flow_exp_b']
         grad_phi = self._grid.calc_grad_at_link(potential)
         h_at_links = self._grid.map_mean_of_link_nodes_to_link(sheet_flow_height)
 
         return (
             k
             * h_at_links**a
-            * jnp.abs(grad_phi)**b
+            * jnp.abs(grad_phi)**(b - 2)
             * grad_phi
         )
 
-    def run_one_step(self, dt: float):
+    def run_one_step(self, dt: float, fields: dict[str, Field]) -> dict[str, Field]:
         """Advance the model by one time step."""
-        updated_thickness = self._update_sheet_flow_height(
-            dt, self._fields['potential'].value, self._fields['sheet_flow_height'].value
-        )
+        updated_potential = self._solve_for_potential(fields)
 
-        updated_potential = self._solve_for_potential(
-            self._fields['potential'].value, updated_thickness
-        )
-
-        return eqx.tree_at(
-            lambda t: (t._fields['potential'].value, t._fields['sheet_flow_height'].value),
-            self,
-            (updated_potential, updated_thickness)
-        )
+        updated_sheet_flow_height = self._update_sheet_flow_height(dt, fields)
+        
+        return {
+            'potential': Field('potential', updated_potential, 'Pa', 'node'),
+            'sheet_flow_height': Field('sheet_flow_height', updated_sheet_flow_height, 'm', 'node')
+        }
         

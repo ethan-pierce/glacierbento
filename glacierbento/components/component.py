@@ -23,8 +23,8 @@ class Component(eqx.Module):
 
     Attributes:
         grid: The StaticGrid object that the Component operates on.
-        input_fields: A dictionary with {names: locations} of required fields.
-        output_fields: A dictionary with {names: locations} of output fields.
+        input_fields: A dictionary with {name: location} of all input fields.
+        output_fields: A dictionary with {name: location} of all output fields.
         params: A dictionary of parameters.
     
     Methods:
@@ -32,15 +32,10 @@ class Component(eqx.Module):
         run_one_step: Advance the model by one time step.
     """
 
-    grid: StaticGrid
+    _grid: StaticGrid
     input_fields: dict[str, str]
     output_fields: dict[str, str]
     params: dict[str, float]
-
-    def __init__(self, params: dict = {}):
-        """Initialize the Component with fields and parameters."""
-        for key, val in params.items():
-            self.params[key] = val
 
     def update_param(self, param: str, new_value: float) -> None:
         """Update the value of a parameter."""

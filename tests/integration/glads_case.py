@@ -33,78 +33,37 @@ A = 2.4e-24
 k = 0.05
 a = 3
 
-def calc_dhdt(phi, h):
-    opening = jnp.abs(sliding_velocity) / lc * jnp.where(h > hc, 0.0, hc - h)
-    N = rhoi * g * ice_thickness + rhow * g * bed_elevation - phi
-    closure = 2 * A / n**n * h * jnp.abs(N)**(n - 1) * N
-    return opening - closure
+model = DistributedDrainageSystem(grid)
+fields = {
+    'ice_thickness': Field('ice_thickness', ice_thickness, units = 'm', location = 'node'),
+    'bed_elevation': Field('bed_elevation', bed_elevation, units = 'm', location = 'node'),
+    'sliding_velocity': Field('sliding_velocity', sliding_velocity, units = 'm/s', location = 'node'),
+    'melt_input': Field('melt_input', melt_input, units = 'm/s', location = 'node'),
+    'potential': Field('potential', phi0, units = 'Pa', location = 'node'),
+    'sheet_flow_height': Field('sheet_flow_height', h0, units = 'm', location = 'node')
+}
 
-def build_forcing_vector(phi, h):
-    dhdt = calc_dhdt(phi, h)
-    return (melt_input - dhdt) * grid.cell_area_at_node
+def update(dt, fields):
+    output = model.run_one_step(dt, fields)
 
-def calc_coeffs(h):
-    h_at_faces = grid.map_mean_of_link_nodes_to_link(h)[grid.link_at_face]
-    return (
-        -grid.length_of_face / grid.length_of_link[grid.link_at_face] * k * h_at_faces**a
-    )
-coeffs = calc_coeffs(h0)
-is_dirichlet = jnp.where(grid.node_x == 0, 1, 0)
-is_neumann = jnp.where((grid.status_at_node != 0) & (grid.node_x != 0), 1, 0)
+    fields['potential'] = output['potential']
+    fields['sheet_flow_height'] = output['sheet_flow_height']
 
-def assemble_row(cell):
-    row = jnp.zeros(grid.number_of_cells)
-    node = grid.node_at_cell[cell]
-    for link in grid.links_at_node[node]:
-        jax.lax.cond(
-            link == -1,
-            lambda link: None,
-            add_valid,
-            link
-        )
+import time
+start = time.time()
+update(60.0, fields)
+end = time.time()
+print(f'Time elapsed: {end - start}')
 
-        def add_valid(link):
-            adj = jnp.where(
-                grid.node_at_link_head[link] == node, 
-                grid.node_at_link_tail[link], 
-                grid.node_at_link_head[link]
-            )
+for i in range(20):
+    update(60.0, fields)
 
-            condition = jnp.argwhere(
-                jnp.array([
-                    link == -1, 
-                    is_dirichlet[adj], 
-                    is_neumann[adj], 
-                    grid.status_at_node[adj] == 0
-                ], size = 1)
-            ).squeeze()
-
-            jax.lax.switch(condition, [lambda: None, add_dirichlet, add_neumann, add_interior])
-
-            def add_dirichlet(link):
-                row.at[adj].set()
-
-def assemble_matrix():
-    return jax.vmap(assemble_row)(jnp.arange(grid.number_of_cells))
-
-def residual(phi, h):
-    h_at_links = grid.map_mean_of_link_nodes_to_link(h)
-    grad_phi = grid.calc_grad_at_link(phi)
-    q = -k * h_at_links**a * grad_phi
-    flux_div = grid.calc_flux_div_at_node(q)
-    forcing = build_forcing_vector(phi, h)
-    return flux_div - forcing
-
-solution = optx.least_squares(
-    residual,
-    solver = optx.OptaxMinimiser(optax.adabelief(learning_rate = 1e-3), rtol = 1e-8, atol = 1e-8,),
-    y0 = jnp.where(grid.node_x == 0, 0.0, phi0),
-    args = h0,
-    max_steps = 10000
-)
-new_phi = solution.value
-res = residual(new_phi, h0)
-
-plt.imshow(res.reshape(grid.shape))
+plt.imshow(fields['potential'].value.reshape(grid.shape))
 plt.colorbar()
+plt.title('Hydraulic Potential (Pa)')
+plt.show()
+
+plt.imshow(fields['sheet_flow_height'].value.reshape(grid.shape))
+plt.colorbar()
+plt.title('Sheet Flow Height (m)')
 plt.show()
