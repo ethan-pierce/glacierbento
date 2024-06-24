@@ -8,7 +8,6 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
-landlab = "^2.8.0"
 jax = "^0.4.28"
 equinox = "^0.11.4"
 matplotlib = "^3.9.0"
@@ -27,7 +26,7 @@ diffrax = "^0.5.1"
 black = "^24.4.2"
 flake8 = "^7.0.0"
 sphinx = "^7.3.7"
-
+landlab = "^2.8.0"
 
 [build-system]
 requires = ["poetry-core"]
