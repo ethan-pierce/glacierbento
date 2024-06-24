@@ -26,7 +26,7 @@ diffrax = "^0.5.1"
 black = "^24.4.2"
 flake8 = "^7.0.0"
 sphinx = "^7.3.7"
-landlab = "^2.8.0"
+landlab = {git = "git@github.com:ethan-pierce/landlab.git", branch = "ethan-pierce/improved_mesh_gen" , rev = "c7bca20d30c67cbe7348beefbd81e5b3f04e6627"}
 
 [build-system]
 requires = ["poetry-core"]

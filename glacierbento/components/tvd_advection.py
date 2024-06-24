@@ -16,7 +16,7 @@ import jax
 import jax.numpy as jnp
 import equinox as eqx
 from scipy.spatial import KDTree
-from glacierbento import Component, StaticGrid
+from glacierbento.utils import Component, StaticGrid
 
 class TVDAdvector(Component):
     """Models advection using a total-variation-diminishing (TVD) scheme."""
