@@ -47,22 +47,28 @@ fields = {
     'sheet_flow_height': Field('sheet_flow_height', h0, units = 'm', location = 'node')
 }
 
+@eqx.filter_jit
 def update(dt, fields):
     output = model.run_one_step(dt, fields)
 
-    fields['potential'] = output['potential']
-    fields['sheet_flow_height'] = output['sheet_flow_height']
+    updated_fields = eqx.tree_at(
+        lambda t: (t['potential'].value, t['sheet_flow_height'].value),
+        fields,
+        (output['potential'].value, output['sheet_flow_height'].value)
+    )
 
-update(1.0, fields)
+    return updated_fields
+
+fields = update(1.0, fields)
 
 import time
 start = time.time()
-update(60.0, fields)
+fields = update(60.0, fields)
 end = time.time()
 print(f'Time elapsed: {end - start}')
 
 for i in range(10):
-    update(60.0, fields)
+    fields = update(60.0, fields)
 
 plt.imshow(fields['potential'].value.reshape(grid.shape))
 plt.colorbar()
