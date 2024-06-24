@@ -50,11 +50,8 @@ fields = {
 def update(dt, fields):
     output = model.run_one_step(dt, fields)
 
-    fields = eqx.tree_at(
-        lambda t: (t['potential'].value, t['sheet_flow_height'].value),
-        fields,
-        (output['potential'].value, output['sheet_flow_height'].value)
-    )
+    fields['potential'] = output['potential']
+    fields['sheet_flow_height'] = output['sheet_flow_height']
 
 update(1.0, fields)
 
