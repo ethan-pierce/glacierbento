@@ -1,7 +1,11 @@
 """Test the DistributedDrainageSystem using the GlaDS test case."""
 
 import jax
+jax.config.update("jax_enable_x64", True)
+jax.config.update("jax_traceback_filtering", "off")
+
 import jax.numpy as jnp
+import equinox as eqx
 import lineax as lx
 import optimistix as optx
 import optax
@@ -46,8 +50,13 @@ fields = {
 def update(dt, fields):
     output = model.run_one_step(dt, fields)
 
-    fields['potential'] = output['potential']
-    fields['sheet_flow_height'] = output['sheet_flow_height']
+    fields = eqx.tree_at(
+        lambda t: (t['potential'].value, t['sheet_flow_height'].value),
+        fields,
+        (output['potential'].value, output['sheet_flow_height'].value)
+    )
+
+update(1.0, fields)
 
 import time
 start = time.time()
@@ -55,7 +64,7 @@ update(60.0, fields)
 end = time.time()
 print(f'Time elapsed: {end - start}')
 
-for i in range(20):
+for i in range(10):
     update(60.0, fields)
 
 plt.imshow(fields['potential'].value.reshape(grid.shape))
