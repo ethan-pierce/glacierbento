@@ -23,7 +23,8 @@ import jax.numpy as jnp
 import equinox as eqx
 import lineax as lx
 import optimistix as optx
-from glacierbento.utils import MatrixAssembler, Field, Component
+from glacierbento import Field, Component
+from glacierbento.utils import MatrixAssembler
 
 
 class DistributedDrainageSystem(Component):

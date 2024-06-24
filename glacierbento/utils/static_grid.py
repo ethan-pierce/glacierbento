@@ -24,6 +24,7 @@ import equinox as eqx
 import dataclasses
 from landlab import ModelGrid
 
+
 def freeze_grid(grid: ModelGrid):
     """Convert an existing Landlab grid to a new StaticGrid.
     
