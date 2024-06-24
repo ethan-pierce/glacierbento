@@ -13,7 +13,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from glacierbento.components import DistributedDrainageSystem
-from glacierbento.utils import freeze_grid, Field
+from glacierbento.utils import freeze_grid
+from glacierbento import Field
 from landlab import RasterModelGrid
 
 rmg = RasterModelGrid((50, 150), xy_spacing = (400, 400))
