@@ -15,10 +15,17 @@ International Journal for Numerical Methods in Fluids, 71(10), 1260-1281.
 import jax
 import jax.numpy as jnp
 import equinox as eqx
+from jaxtyping import Array
 from scipy.spatial import KDTree
-from glacierbento.utils import Component, StaticGrid
+from glacierbento import Field, Component
+from glacierbento.utils import StaticGrid
+
 
 class TVDAdvector(Component):
     """Models advection using a total-variation-diminishing (TVD) scheme."""
 
     grid: StaticGrid
+
+    def run_one_step(self, dt: float, targets: [str, Field], fields: [str, Field]) -> Array:
+        """Advect every field in targets by one step of size dt."""
+        pass
