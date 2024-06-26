@@ -218,7 +218,7 @@ class DistributedDrainageSystem(Component):
         updated_sheet_flow_height = self._update_sheet_flow_height(dt, fields)
         
         return {
-            'potential': Field('potential', updated_potential, 'Pa', 'node'),
-            'sheet_flow_height': Field('sheet_flow_height', updated_sheet_flow_height, 'm', 'node')
+            'potential': Field(updated_potential, 'Pa', 'node'),
+            'sheet_flow_height': Field(updated_sheet_flow_height, 'm', 'node')
         }
         

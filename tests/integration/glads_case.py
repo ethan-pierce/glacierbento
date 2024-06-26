@@ -40,12 +40,12 @@ a = 3
 
 model = DistributedDrainageSystem(grid)
 fields = {
-    'ice_thickness': Field('ice_thickness', ice_thickness, units = 'm', location = 'node'),
-    'bed_elevation': Field('bed_elevation', bed_elevation, units = 'm', location = 'node'),
-    'sliding_velocity': Field('sliding_velocity', sliding_velocity, units = 'm/s', location = 'node'),
-    'melt_input': Field('melt_input', melt_input, units = 'm/s', location = 'node'),
-    'potential': Field('potential', phi0, units = 'Pa', location = 'node'),
-    'sheet_flow_height': Field('sheet_flow_height', h0, units = 'm', location = 'node')
+    'ice_thickness': Field(ice_thickness, units = 'm', location = 'node'),
+    'bed_elevation': Field(bed_elevation, units = 'm', location = 'node'),
+    'sliding_velocity': Field(sliding_velocity, units = 'm/s', location = 'node'),
+    'melt_input': Field(melt_input, units = 'm/s', location = 'node'),
+    'potential': Field(phi0, units = 'Pa', location = 'node'),
+    'sheet_flow_height': Field(h0, units = 'm', location = 'node')
 }
 
 @eqx.filter_jit

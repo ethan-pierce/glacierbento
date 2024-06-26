@@ -42,7 +42,6 @@ class Field(eqx.Module):
         units: A string indicating the units of the data.
         location: A string indicating the location of the data.
     """
-    name: str = eqx.field(converter = str)
     value: jnp.ndarray = eqx.field(converter = jnp.asarray)
     units: str = eqx.field(converter = str)
     location: str = eqx.field(converter = str)
