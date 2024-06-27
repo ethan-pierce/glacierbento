@@ -54,7 +54,7 @@ class MatrixAssembler:
         adj_node = self.get_adjacent_node(cell, link)
         face = self.grid.face_at_link[link]
         row = row.at[cell].add(-self.coeffs[face])
-        forcing = forcing.at[cell].add(self.coeffs[face] * self.boundary_values[adj_node])
+        forcing = forcing.at[cell].add(-self.coeffs[face] * self.boundary_values[adj_node])
         return forcing, row
 
     def add_interior(self, args):

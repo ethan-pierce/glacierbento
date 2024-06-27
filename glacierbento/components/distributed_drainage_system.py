@@ -76,7 +76,7 @@ class DistributedDrainageSystem(Component):
 
         # 1 denotes inflow, -1 denotes outflow
         inflow_outflow = jnp.where(
-            potential <= min_adj_potential,
+            (potential <= min_adj_potential),
             -1 * (self._grid.status_at_node > 0),
             1 * (self._grid.status_at_node > 0)
         )
@@ -136,12 +136,14 @@ class DistributedDrainageSystem(Component):
         """Assemble the linear system for the potential field."""
         coeffs = self._calc_coeffs(fields)
         forcing = self._build_forcing_vector(fields)
+
+        bed_elevation = fields['bed_elevation'].value
+        boundary_values = self.params['water_density'] * self.params['gravity'] * bed_elevation
+
         boundary_tags = self._set_inflow_outflow(fields)
         is_fixed_value = jnp.where(boundary_tags == 1, 1, 0)
 
-        assembler = MatrixAssembler(
-            self._grid, coeffs, forcing, jnp.zeros(self._grid.number_of_nodes), is_fixed_value
-        )
+        assembler = MatrixAssembler(self._grid, coeffs, forcing, boundary_values, is_fixed_value)
 
         forcing, matrix = assembler.assemble_matrix()
         return forcing, matrix
@@ -205,7 +207,7 @@ class DistributedDrainageSystem(Component):
         h_at_links = self._grid.map_mean_of_link_nodes_to_link(sheet_flow_height)
 
         return (
-            k
+            -k
             * h_at_links**a
             * jnp.abs(grad_phi)**(b - 2)
             * grad_phi
