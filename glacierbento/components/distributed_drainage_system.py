@@ -63,12 +63,13 @@ class DistributedDrainageSystem(Component):
 
     def _set_inflow_outflow(self, fields: dict[str, Field]) -> jax.Array:
         """Determine whether boundary nodes expect inflow or outflow."""
-        potential = fields['potential'].value
+        bed_elevation = fields['bed_elevation'].value
+        base_potential = (self.params['water_density'] * self.params['gravity'] * bed_elevation)
 
         min_adj_potential = jnp.min(
             jnp.where(
                 self._grid.adjacent_nodes_at_node != -1,
-                potential[self._grid.adjacent_nodes_at_node],
+                base_potential[self._grid.adjacent_nodes_at_node],
                 jnp.inf
             ),
             axis = 1
@@ -76,7 +77,7 @@ class DistributedDrainageSystem(Component):
 
         # 1 denotes inflow, -1 denotes outflow
         inflow_outflow = jnp.where(
-            (potential <= min_adj_potential),
+            (base_potential <= min_adj_potential),
             -1 * (self._grid.status_at_node > 0),
             1 * (self._grid.status_at_node > 0)
         )
