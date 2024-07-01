@@ -33,19 +33,7 @@ class DistributedDrainageSystem(Component):
     def __init__(
         self,
         grid,
-        input_fields = {
-            'ice_thickness': 'node',
-            'bed_elevation': 'node',
-            'sliding_velocity': 'node',
-            'melt_input': 'node',
-            'potential': 'node',
-            'sheet_flow_height': 'node'
-        },
-        output_fields = {
-            'potential': 'node',
-            'sheet_flow_height': 'node'
-        },
-        parameters = {
+        params = {
             'gravity': 9.81,
             'ice_density': 917,
             'water_density': 1000,
@@ -59,7 +47,21 @@ class DistributedDrainageSystem(Component):
         }
     ):
         """Initialize the DistributedDrainageSystem."""
-        super().__init__(grid, input_fields, output_fields, parameters)
+        self.input_fields = {
+            'ice_thickness': 'node',
+            'bed_elevation': 'node',
+            'sliding_velocity': 'node',
+            'melt_input': 'node',
+            'potential': 'node',
+            'sheet_flow_height': 'node'
+        }
+
+        self.output_fields = {
+            'potential': 'node',
+            'sheet_flow_height': 'node'
+        }
+
+        super().__init__(grid, params)
 
     def _set_inflow_outflow(self, fields: dict[str, Field]) -> jax.Array:
         """Determine whether boundary nodes expect inflow or outflow."""

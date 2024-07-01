@@ -76,6 +76,12 @@ class Component(eqx.Module):
     output_fields: dict[str, str]
     params: dict[str, float]
 
+    @abstractmethod
+    def __init__(self, grid, params = {}):
+        """Components should be able to be instantiated with only a grid."""
+        self._grid = grid
+        self.params = params
+
     def update_param(self, param: str, new_value: float) -> None:
         """Update the value of a parameter."""
         self.params[param] = new_value
