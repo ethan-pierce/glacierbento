@@ -43,7 +43,7 @@ class SimpleGlacialEroder(Component):
         self, 
         grid,
         params = {
-            'rate_coefficient': 2.7e-7,
+            'rate_coefficient': 2.7e-7 * 31556926, # 1 / (ms)
             'sliding_exponent': 2
         }
     ):
@@ -72,6 +72,6 @@ class SimpleGlacialEroder(Component):
         till_thickness = fields['till_thickness'].value + erosion_rate * dt
 
         return {
-            'erosion_rate': Field('erosion_rate', erosion_rate),
-            'till_thickness': Field('till_thickness', till_thickness)
+            'erosion_rate': Field(erosion_rate, fields['sliding_velocity'].units, 'node'),
+            'till_thickness': Field(till_thickness, fields['till_thickness'].units, 'node')
         }
