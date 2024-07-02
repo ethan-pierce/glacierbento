@@ -64,5 +64,3 @@ def test_run_one_step(tvd, fields, grid):
 
     assert 'tracer_advected' in output
     
-    imshow_grid(grid, output['tracer_advected'].value)
-    plt.show()
