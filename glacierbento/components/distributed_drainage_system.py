@@ -1,4 +1,4 @@
-"""This Component models the drainage system beneath a glacier.
+"""Models the inefficient component of the drainage system beneath a glacier.
 
 The DistributedDrainageSystem models the evolution of hydraulic potential
 (i.e., water pressure) and subglacial flow thickness beneath an individual 
