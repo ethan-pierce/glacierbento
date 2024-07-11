@@ -40,7 +40,7 @@ class FrozenFringe(Component):
 
     def __init__(
         self,
-        grid: StaticGrid,
+        grid,
         params = {
             'surface_energy': 0.034,
             'pore_throat_radius': 1e-6,
@@ -62,7 +62,8 @@ class FrozenFringe(Component):
         """Initialize the FrozenFringe."""
         self.input_fields = {
             'ice_thickness': 'node',
-            'basal_melt_rate': 'node'
+            'basal_melt_rate': 'node',
+            'fringe_thickness': 'node'
         }
 
         self.output_fields = {
@@ -71,15 +72,17 @@ class FrozenFringe(Component):
             'fringe_undercooling': 'node'
         }
 
+        self.params = params
+
         self.params['threshold_pressure'] = (
             2 * self.params['surface_energy'] / self.params['pore_throat_radius']
         )
 
         self.params['base_temperature'] = self._calc_base_temperature()
 
-        super().__init__(grid, params)
+        super().__init__(grid, self.params)
 
-    def _calc_base_temperature(self, fields: dict[str, Field]) -> Array:
+    def _calc_base_temperature(self) -> Array:
         """Calculate the temperature at the base of the frozen fringe."""
         pf = self.params['threshold_pressure']
         Tm = self.params['melt_temperature']
@@ -95,7 +98,7 @@ class FrozenFringe(Component):
         L = self.params['latent_heat']
         ki = self.params['ice_conductivity']
 
-        return m * rho_i * L / ki
+        return -m * rho_i * L / ki
 
     def _calc_undercooling(self, fields: dict[str, Field]) -> Array:
         """Calculate the undercooling at the top of the frozen fringe."""
@@ -160,7 +163,7 @@ class FrozenFringe(Component):
 
     def _calc_dhdt(self, fields: dict[str, Field]) -> Array:
         """Calculate the rate of change of fringe thickness."""
-        m = self.fields['basal_melt_rate'].value
+        m = fields['basal_melt_rate'].value
         heave = self._calc_heave_rate(fields)
         S = self._calc_fringe_saturation(fields)
         phi = self.params['till_porosity']
