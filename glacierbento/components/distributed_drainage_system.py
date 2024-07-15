@@ -38,7 +38,7 @@ class DistributedDrainageSystem(Component):
             'ice_density': 917,
             'water_density': 1000,
             'cavity_spacing': 10,
-            'bed_bump_height': 0.5,
+            'bed_bump_height': 1.0,
             'ice_flow_n': 3,
             'ice_flow_coeff': 2.4e-24,
             'sheet_conductivity': 0.05,
