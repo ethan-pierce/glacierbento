@@ -23,6 +23,7 @@ import jax.numpy as jnp
 import equinox as eqx
 import lineax as lx
 import optimistix as optx
+from jaxtyping import Array
 from glacierbento import Field, Component
 from glacierbento.utils import MatrixAssembler
 
@@ -63,7 +64,7 @@ class DistributedDrainageSystem(Component):
 
         super().__init__(grid, params)
 
-    def _set_inflow_outflow(self, fields: dict[str, Field]) -> jax.Array:
+    def _set_inflow_outflow(self, fields: dict[str, Field]) -> Array:
         """Determine whether boundary nodes expect inflow or outflow."""
         bed_elevation = fields['bed_elevation'].value
         base_potential = (self.params['water_density'] * self.params['gravity'] * bed_elevation)
@@ -86,11 +87,9 @@ class DistributedDrainageSystem(Component):
 
         return inflow_outflow
 
-    def _calc_dhdt(self, fields: dict[str, Field]) -> jax.Array:
+    def _calc_dhdt(self, sheet_flow_height: Array, fields: dict[str, Field]) -> Array:
         """Calculate the rate of change of the thickness of sheet flow."""
-        sheet_flow_height = fields['sheet_flow_height'].value
         sliding_velocity = fields['sliding_velocity'].value
-
         N = self.calc_effective_pressure(fields)
 
         opening = (
@@ -113,7 +112,7 @@ class DistributedDrainageSystem(Component):
 
         return opening - closure
 
-    def _calc_coeffs(self, fields: dict[str, Field]) -> jax.Array:
+    def _calc_coeffs(self, fields: dict[str, Field]) -> Array:
         """Calculate the coefficients for the finite volume matrix."""
         sheet_flow_height = fields['sheet_flow_height'].value
         k = self.params['sheet_conductivity']
@@ -127,15 +126,16 @@ class DistributedDrainageSystem(Component):
             * -k * h_at_faces**a
         )
 
-    def _build_forcing_vector(self, fields: dict[str, Field]) -> jax.Array:
+    def _build_forcing_vector(self, fields: dict[str, Field]) -> Array:
         """Build the forcing vector for the potential field."""
         melt_input = fields['melt_input'].value
-        dhdt = self._calc_dhdt(fields)
+        sheet_flow_height = fields['sheet_flow_height'].value
+        dhdt = self._calc_dhdt(sheet_flow_height, fields)
         forcing_at_nodes = melt_input - dhdt
 
         return forcing_at_nodes[self._grid.node_at_cell]
 
-    def _assemble_linear_system(self, fields) -> tuple[jax.Array, jax.Array]:
+    def _assemble_linear_system(self, fields) -> tuple[Array, Array]:
         """Assemble the linear system for the potential field."""
         coeffs = self._calc_coeffs(fields)
         forcing = self._build_forcing_vector(fields)
@@ -151,7 +151,7 @@ class DistributedDrainageSystem(Component):
         forcing, matrix = assembler.assemble_matrix()
         return forcing, matrix
 
-    def _solve_for_potential(self, fields: dict[str, Field]) -> jax.Array:
+    def _solve_for_potential(self, fields: dict[str, Field]) -> Array:
         """Solve for potential from the previous step's potential and sheet thickness."""
         b, A = self._assemble_linear_system(fields)
 
@@ -167,11 +167,11 @@ class DistributedDrainageSystem(Component):
             base_potential
         )
 
-    def _update_sheet_flow_height(self, dt: float, fields: dict[str, Field]) -> jax.Array:
+    def _update_sheet_flow_height(self, dt: float, fields: dict[str, Field]) -> Array:
         """Update the thickness of the sheet flow."""
         sheet_flow_height = fields['sheet_flow_height'].value
 
-        residual = lambda h, _: h - sheet_flow_height - dt * self._calc_dhdt(fields)
+        residual = lambda h, _: h - sheet_flow_height - dt * self._calc_dhdt(h, fields)
         solver = optx.Newton(rtol = 1e-6, atol = 1e-6)
         solution = optx.root_find(residual, solver, sheet_flow_height, args = None)
 
@@ -187,7 +187,7 @@ class DistributedDrainageSystem(Component):
             0.0
         )
 
-    def calc_effective_pressure(self, fields: dict[str, Field]) -> jax.Array:
+    def calc_effective_pressure(self, fields: dict[str, Field]) -> Array:
         """Calculate effective pressure from the hydraulic potential."""
         potential = fields['potential'].value
         bed_elevation = fields['bed_elevation'].value
@@ -199,7 +199,7 @@ class DistributedDrainageSystem(Component):
         )
         return overburden - water_pressure
 
-    def calc_discharge(self, fields: dict[str, Field]) -> jax.Array:
+    def calc_discharge(self, fields: dict[str, Field]) -> Array:
         """Calculate the discharge through the sheet flow on grid links."""
         potential = fields['potential'].value
         sheet_flow_height = fields['sheet_flow_height'].value

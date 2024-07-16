@@ -161,8 +161,9 @@ class FrozenFringe(Component):
 
         return Vn * numerator / (d_first + d_second + d_third + Pi)
 
-    def _calc_dhdt(self, fields: dict[str, Field]) -> Array:
+    def _calc_dhdt(self, fringe_thickness: Array, fields: dict[str, Field]) -> Array:
         """Calculate the rate of change of fringe thickness."""
+        fields = eqx.tree_at(lambda t: t['fringe_thickness'].value, fields, fringe_thickness)
         m = fields['basal_melt_rate'].value
         heave = self._calc_heave_rate(fields)
         S = self._calc_fringe_saturation(fields)
@@ -177,10 +178,8 @@ class FrozenFringe(Component):
     def run_one_step(self, dt: float, fields: dict[str, Field]) -> dict[str, Field]:
         """Advance the model one step."""
         fringe_thickness = fields['fringe_thickness'].value
-        fringe_saturation = self._calc_fringe_saturation(fields)
-        fringe_undercooling = self._calc_undercooling(fields)
 
-        residual = lambda h, _: h - fringe_thickness - self._calc_dhdt(fields) * dt
+        residual = lambda h, _: h - fringe_thickness - self._calc_dhdt(h, fields) * dt
         solver = optx.Newton(rtol = 1e-6, atol = 1e-6)
         solution = optx.root_find(residual, solver, fringe_thickness, args = None)
 
@@ -189,6 +188,10 @@ class FrozenFringe(Component):
             self.params['min_fringe'],
             solution.value
         )
+
+        fields = eqx.tree_at(lambda t: t['fringe_thickness'].value, fields, updated_fringe_thickness)
+        fringe_saturation = self._calc_fringe_saturation(fields)
+        fringe_undercooling = self._calc_undercooling(fields)
 
         return {
             'fringe_thickness': Field(updated_fringe_thickness, 'm', 'node'),
