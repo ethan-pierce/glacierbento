@@ -28,6 +28,7 @@ class FrozenFringe(Component):
     Input fields:
         ice_thickness: thickness of glacier ice at nodes
         basal_melt_rate: rate of subglacial melt at nodes
+        fringe_thickness: thickness of the frozen fringe at nodes
 
     Output fields:
         fringe_thickness: thickness of the frozen fringe at nodes
