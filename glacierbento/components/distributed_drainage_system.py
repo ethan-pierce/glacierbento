@@ -52,7 +52,7 @@ class DistributedDrainageSystem(Component):
             'ice_thickness': 'node',
             'bed_elevation': 'node',
             'sliding_velocity': 'node',
-            'melt_input': 'node',
+            'basal_melt_rate': 'node',
             'potential': 'node',
             'sheet_flow_height': 'node'
         }
@@ -128,10 +128,10 @@ class DistributedDrainageSystem(Component):
 
     def _build_forcing_vector(self, fields: dict[str, Field]) -> Array:
         """Build the forcing vector for the potential field."""
-        melt_input = fields['melt_input'].value
+        basal_melt_rate = fields['basal_melt_rate'].value
         sheet_flow_height = fields['sheet_flow_height'].value
         dhdt = self._calc_dhdt(sheet_flow_height, fields)
-        forcing_at_nodes = melt_input - dhdt
+        forcing_at_nodes = basal_melt_rate - dhdt
 
         return forcing_at_nodes[self._grid.node_at_cell]
 
