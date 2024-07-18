@@ -115,6 +115,22 @@ class StaticGrid(eqx.Module):
         
         return magnitude * jnp.cos(mapped_angle)
 
+    def resolve_values_on_links(self, array):
+        """Resolve an array defined on links to its x-and-y components."""
+        x_vals = (
+            (self.node_x[self.node_at_link_head] - self.node_x[self.node_at_link_tail])
+            / self.length_of_link 
+            * array
+        )
+
+        y_vals = (
+            (self.node_y[self.node_at_link_head] - self.node_y[self.node_at_link_tail])
+            / self.length_of_link 
+            * array
+        )
+        
+        return (x_vals, y_vals)
+
     def map_value_at_max_node_to_link(self, controls, values):
         """Map values field to links based on the maximum value of the controls field."""
         ctrl_heads = controls[self.node_at_link_head]
