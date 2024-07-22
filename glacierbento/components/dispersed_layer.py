@@ -93,7 +93,7 @@ class DispersedLayer(Component):
         solver = optx.Newton(rtol = 1e-6, atol = 1e-6)
         solution = optx.root_find(residual, solver, dispersed_thickness, args = None)
 
-        updated_dispersed = jnp.maximum(solution.value, 0.0)
+        updated_dispersed = jnp.maximum(solution.value, 1e-3)
 
         fields = eqx.tree_at(lambda t: t['dispersed_thickness'].value, fields, updated_dispersed)
         gradient = self._calc_temperature_gradient(fields)

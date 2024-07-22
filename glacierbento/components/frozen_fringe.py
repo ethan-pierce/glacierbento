@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 import equinox as eqx
 import optimistix as optx
+import lineax as lx
 from jaxtyping import Array
 from glacierbento import Field, Component
 
@@ -28,12 +29,14 @@ class FrozenFringe(Component):
     Input fields:
         ice_thickness: thickness of glacier ice at nodes
         basal_melt_rate: rate of subglacial melt at nodes
+        till_thickness: thickness of till at nodes
         fringe_thickness: thickness of the frozen fringe at nodes
 
     Output fields:
         fringe_thickness: thickness of the frozen fringe at nodes
         fringe_saturation: ratio of the volume occupied by ice
         fringe_undercooling: non-dimensional undercooling at the top of the fringe
+        till_thickness: updated thickness of till at nodes
 
     Methods:
         run_one_step: advance the model by one time step of size dt
@@ -64,13 +67,15 @@ class FrozenFringe(Component):
         self.input_fields = {
             'ice_thickness': 'node',
             'basal_melt_rate': 'node',
+            'till_thickness': 'node',
             'fringe_thickness': 'node'
         }
 
         self.output_fields = {
             'fringe_thickness': 'node',
             'fringe_saturation': 'node',
-            'fringe_undercooling': 'node'
+            'fringe_undercooling': 'node',
+            'till_thickness': 'node'
         }
 
         self.params = params
@@ -170,24 +175,35 @@ class FrozenFringe(Component):
         S = self._calc_fringe_saturation(fields)
         phi = self.params['till_porosity']
 
-        return jnp.where(
-            S > 0,
-            (-m - heave) / (phi * S),
-            0.0
-        )
+        return jnp.where(S > 0, (-m - heave) / (phi * S), 0.0)
+
+    def _calc_entrainment(self, dt: float, fringe_thickness: Array, fields: dict[str, Field]) -> Array:
+        """Calculate the fringe growth under supply-limited conditions."""
+        till = fields['till_thickness'].value
+        dhdt = self._calc_dhdt(fringe_thickness, fields)
+        
+        return jnp.where((dhdt * dt) > till, till, dhdt * dt)
         
     def run_one_step(self, dt: float, fields: dict[str, Field]) -> dict[str, Field]:
         """Advance the model one step."""
         fringe_thickness = fields['fringe_thickness'].value
-
-        residual = lambda h, _: h - fringe_thickness - self._calc_dhdt(h, fields) * dt
-        solver = optx.Newton(rtol = 1e-6, atol = 1e-6)
-        solution = optx.root_find(residual, solver, fringe_thickness, args = None)
+        entrainment = self._calc_entrainment(dt, fringe_thickness, fields)
 
         updated_fringe_thickness = jnp.where(
-            solution.value < self.params['min_fringe'],
+            fringe_thickness + entrainment < self.params['min_fringe'],
             self.params['min_fringe'],
-            solution.value
+            fringe_thickness + entrainment
+        )
+
+        # residual = lambda h, _: h - fringe_thickness - self._calc_entrainment(dt, h, fields)
+        # solver = optx.Newton(rtol = 1e-3, atol = 1e-3)
+        # solution = optx.root_find(residual, solver, fringe_thickness, args = None)
+
+        till_thickness = fields['till_thickness'].value
+        updated_till_thickness = jnp.where(
+            till_thickness - entrainment < 0,
+            0.0,
+            till_thickness - entrainment
         )
 
         fields = eqx.tree_at(lambda t: t['fringe_thickness'].value, fields, updated_fringe_thickness)
@@ -197,5 +213,6 @@ class FrozenFringe(Component):
         return {
             'fringe_thickness': Field(updated_fringe_thickness, 'm', 'node'),
             'fringe_saturation': Field(fringe_saturation, 'None', 'node'),
-            'fringe_undercooling': Field(fringe_undercooling, 'None', 'node')
+            'fringe_undercooling': Field(fringe_undercooling, 'None', 'node'),
+            'till_thickness': Field(updated_till_thickness, 'm', 'node')
         }

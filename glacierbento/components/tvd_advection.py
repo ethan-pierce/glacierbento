@@ -31,6 +31,9 @@ class TVDAdvector(Component):
         velocity_x: x-component of velocity field
         velocity_y: y-component of velocity field
 
+    Output fields:
+        For each field in fields_to_advect, a field with the same name
+
     Plus, for every name in fields_to_advect, a field with that name must
     be defined on grid nodes.
     
@@ -61,7 +64,7 @@ class TVDAdvector(Component):
 
         for field in fields_to_advect:
             self.input_fields[field] = 'node'
-            self.output_fields[field + '_advected'] = 'node'
+            self.output_fields[field] = 'node'
 
         super().__init__(grid, params)
 
@@ -169,16 +172,15 @@ class TVDAdvector(Component):
 
     def run_one_step(self, dt: float, fields: [str, Field]) -> dict[str, Field]:
         """Advect every field in targets by one step of size dt."""
-        output = {key: None for key, _ in self.output_fields.items()}
+        output = {key: [] for key, _ in self.output_fields.items()}
 
-        for output_field in self.output_fields.keys():
-            field_name = output_field.replace('_advected', '')
+        for field_name in self.output_fields.keys():
             field = fields[field_name].value
             flux_div = -self._grid.calc_flux_div_at_node(self._calc_flux(field))
             advected = field + dt * flux_div
 
             output = eqx.tree_at(
-                lambda t: t[field_name + '_advected'],
+                lambda t: t[field_name],
                 output,
                 Field(advected, fields[field_name].units, fields[field_name].location)
             )
