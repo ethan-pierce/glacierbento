@@ -182,7 +182,7 @@ class TVDAdvector(Component):
             output = eqx.tree_at(
                 lambda t: t[field_name],
                 output,
-                Field(advected, fields[field_name].units, fields[field_name].location)
+                Field(advected, fields[field_name].units, 'node'),
             )
 
         return output

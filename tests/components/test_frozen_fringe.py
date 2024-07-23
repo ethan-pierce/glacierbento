@@ -29,7 +29,6 @@ def fields(grid):
     return {
         'effective_pressure': Field(effective_pressure, 'Pa', 'node'),
         'basal_melt_rate': Field(basal_melt, 'm/s', 'node'),
-        'till_thickness': Field(np.zeros(grid.number_of_nodes) + 1.0, 'm', 'node'),
         'fringe_thickness': Field(fringe_thickness, 'm', 'node')
     }
 
@@ -49,15 +48,14 @@ def test_run_one_step(model, grid, fields):
         output = update(fields)
         
         fields = eqx.tree_at(
-            lambda t: (t['fringe_thickness'], t['till_thickness']), 
+            lambda t: (t['fringe_thickness']), 
             fields, 
-            (output['fringe_thickness'], output['till_thickness'])
+            (output['fringe_thickness'])
         )
     
     hf = output['fringe_thickness'].value
     S = output['fringe_saturation'].value
     theta = output['fringe_undercooling'].value
-    ht = output['till_thickness'].value
 
     imshow_grid(grid, hf)
     plt.show()
@@ -66,7 +64,4 @@ def test_run_one_step(model, grid, fields):
     plt.show()
 
     imshow_grid(grid, theta)
-    plt.show()
-
-    imshow_grid(grid, ht)
     plt.show()

@@ -29,14 +29,12 @@ class FrozenFringe(Component):
     Input fields:
         ice_thickness: thickness of glacier ice at nodes
         basal_melt_rate: rate of subglacial melt at nodes
-        till_thickness: thickness of till at nodes
         fringe_thickness: thickness of the frozen fringe at nodes
 
     Output fields:
         fringe_thickness: thickness of the frozen fringe at nodes
         fringe_saturation: ratio of the volume occupied by ice
         fringe_undercooling: non-dimensional undercooling at the top of the fringe
-        till_thickness: updated thickness of till at nodes
 
     Methods:
         run_one_step: advance the model by one time step of size dt
@@ -113,7 +111,8 @@ class FrozenFringe(Component):
         Tm = self.params['melt_temperature']
         Tf = self.params['base_temperature']
 
-        return 1 - ((G * h) / (Tm - Tf))
+        theta = 1 - ((G * h) / (Tm - Tf))
+        return jnp.where(theta < 1, 1, theta)
 
     def _calc_fringe_saturation(self, fields: dict[str, Field]) -> Array:
         """Calculate the saturation of the frozen fringe."""
@@ -164,8 +163,9 @@ class FrozenFringe(Component):
         d_first = ((1 - phi)**2 / (a + 1)) * (theta**(a + 1) - 1)
         d_second = ((2 * (1 - phi) * phi) / (a - b + 1)) * (theta**(a - b + 1) - 1)
         d_third = (phi**2 / (a - 2 * b + 1)) * (theta**(a - 2 * b + 1) - 1)
+        denominator = (d_first + d_second + d_third + Pi)
 
-        return Vn * numerator / (d_first + d_second + d_third + Pi)
+        return jnp.where(denominator != 0.0, Vn * numerator / denominator, 0.0)
 
     def _calc_dhdt(self, fringe_thickness: Array, fields: dict[str, Field]) -> Array:
         """Calculate the rate of change of fringe thickness."""
@@ -175,44 +175,22 @@ class FrozenFringe(Component):
         S = self._calc_fringe_saturation(fields)
         phi = self.params['till_porosity']
 
-        return jnp.where(S > 0, (-m - heave) / (phi * S), 0.0)
-
-    def _calc_entrainment(self, dt: float, fringe_thickness: Array, fields: dict[str, Field]) -> Array:
-        """Calculate the fringe growth under supply-limited conditions."""
-        till = fields['till_thickness'].value
-        dhdt = self._calc_dhdt(fringe_thickness, fields)
-        
-        return jnp.where((dhdt * dt) > till, till, dhdt * dt)
+        return jnp.where(S != 0, (-m - heave) / (phi * S), 0.0)
         
     def run_one_step(self, dt: float, fields: dict[str, Field]) -> dict[str, Field]:
         """Advance the model one step."""
         fringe_thickness = fields['fringe_thickness'].value
-        entrainment = self._calc_entrainment(dt, fringe_thickness, fields)
 
-        updated_fringe_thickness = jnp.where(
-            fringe_thickness + entrainment < self.params['min_fringe'],
-            self.params['min_fringe'],
-            fringe_thickness + entrainment
-        )
+        residual = lambda h, _: h - fringe_thickness - self._calc_dhdt(h, fields) * dt
+        solver = optx.Newton(rtol = 1, atol = 1)
+        solution = optx.root_find(residual, solver, fringe_thickness, args = None)
 
-        # residual = lambda h, _: h - fringe_thickness - self._calc_entrainment(dt, h, fields)
-        # solver = optx.Newton(rtol = 1e-3, atol = 1e-3)
-        # solution = optx.root_find(residual, solver, fringe_thickness, args = None)
-
-        till_thickness = fields['till_thickness'].value
-        updated_till_thickness = jnp.where(
-            till_thickness - entrainment < 0,
-            0.0,
-            till_thickness - entrainment
-        )
-
-        fields = eqx.tree_at(lambda t: t['fringe_thickness'].value, fields, updated_fringe_thickness)
+        fields = eqx.tree_at(lambda t: t['fringe_thickness'].value, fields, solution.value)
         fringe_saturation = self._calc_fringe_saturation(fields)
         fringe_undercooling = self._calc_undercooling(fields)
 
         return {
-            'fringe_thickness': Field(updated_fringe_thickness, 'm', 'node'),
+            'fringe_thickness': Field(solution.value, 'm', 'node'),
             'fringe_saturation': Field(fringe_saturation, 'None', 'node'),
-            'fringe_undercooling': Field(fringe_undercooling, 'None', 'node'),
-            'till_thickness': Field(updated_till_thickness, 'm', 'node')
+            'fringe_undercooling': Field(fringe_undercooling, 'None', 'node')
         }

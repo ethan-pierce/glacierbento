@@ -89,11 +89,12 @@ class DispersedLayer(Component):
         """Advance the model by one step."""
         dispersed_thickness = fields['dispersed_thickness'].value
 
-        residual = lambda h, _: h - dispersed_thickness - dt * self._calc_regelation_rate(h, fields)
-        solver = optx.Newton(rtol = 1e-6, atol = 1e-6)
-        solution = optx.root_find(residual, solver, dispersed_thickness, args = None)
+        # residual = lambda h, _: h - dispersed_thickness - dt * self._calc_regelation_rate(h, fields)
+        # solver = optx.Newton(rtol = 1e-6, atol = 1e-6)
+        # solution = optx.root_find(residual, solver, dispersed_thickness, args = None)
+        # updated_dispersed = jnp.maximum(solution.value, 1e-3)
 
-        updated_dispersed = jnp.maximum(solution.value, 1e-3)
+        updated_dispersed = dispersed_thickness + dt * self._calc_regelation_rate(dispersed_thickness, fields)
 
         fields = eqx.tree_at(lambda t: t['dispersed_thickness'].value, fields, updated_dispersed)
         gradient = self._calc_temperature_gradient(fields)
