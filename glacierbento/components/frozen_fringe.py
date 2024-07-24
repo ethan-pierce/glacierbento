@@ -181,16 +181,18 @@ class FrozenFringe(Component):
         """Advance the model one step."""
         fringe_thickness = fields['fringe_thickness'].value
 
-        residual = lambda h, _: h - fringe_thickness - self._calc_dhdt(h, fields) * dt
-        solver = optx.Newton(rtol = 1, atol = 1)
-        solution = optx.root_find(residual, solver, fringe_thickness, args = None)
+        # residual = lambda h, _: h - fringe_thickness - self._calc_dhdt(h, fields) * dt
+        # solver = optx.Newton(rtol = 1e-3, atol = 1e-3)
+        # solution = optx.root_find(residual, solver, fringe_thickness, args = None, max_steps = 10)
 
-        fields = eqx.tree_at(lambda t: t['fringe_thickness'].value, fields, solution.value)
+        solution = fringe_thickness + self._calc_dhdt(fringe_thickness, fields) * dt
+
+        fields = eqx.tree_at(lambda t: t['fringe_thickness'].value, fields, solution)
         fringe_saturation = self._calc_fringe_saturation(fields)
         fringe_undercooling = self._calc_undercooling(fields)
 
         return {
-            'fringe_thickness': Field(solution.value, 'm', 'node'),
+            'fringe_thickness': Field(solution, 'm', 'node'),
             'fringe_saturation': Field(fringe_saturation, 'None', 'node'),
             'fringe_undercooling': Field(fringe_undercooling, 'None', 'node')
         }

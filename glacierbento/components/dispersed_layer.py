@@ -90,7 +90,7 @@ class DispersedLayer(Component):
         dispersed_thickness = fields['dispersed_thickness'].value
 
         # residual = lambda h, _: h - dispersed_thickness - dt * self._calc_regelation_rate(h, fields)
-        # solver = optx.Newton(rtol = 1e-6, atol = 1e-6)
+        # solver = optx.Newton(rtol = 1e-3, atol = 1e-3)
         # solution = optx.root_find(residual, solver, dispersed_thickness, args = None)
         # updated_dispersed = jnp.maximum(solution.value, 1e-3)
 

@@ -186,3 +186,7 @@ class TVDAdvector(Component):
             )
 
         return output
+
+    def calc_stable_time_step(self, cfl: Float) -> Float:
+        """Calculate the maximum stable time step for the current grid."""
+        return cfl * jnp.min(self._grid.length_of_link / jnp.abs(self._link_velocity))
