@@ -42,7 +42,8 @@ class DispersedLayer(Component):
             'melt_temperature': 273.15,
             'ice_density': 917,
             'ice_conductivity': 2.0,
-            'latent_heat': 3.34e5
+            'latent_heat': 3.34e5,
+            'critical_depth': 10.0
         }
     ):
         """Initialize the DispersedLayer."""
@@ -72,8 +73,9 @@ class DispersedLayer(Component):
         """Calculate the temperature gradient through the dispersed layer."""
         top_temperature = self._calc_top_temperature(fields)
         Tm = self.params['melt_temperature']
+        crit_depth = jnp.maximum(fields['dispersed_thickness'].value, self.params['critical_depth'])
 
-        return (top_temperature - Tm) / fields['dispersed_thickness'].value
+        return (top_temperature - Tm) / crit_depth
 
     def _calc_regelation_rate(self, dispersed_thickness: Array, fields: dict[str, Field]) -> Array:
         """Calculate the maximum rate of regelation for particles or clusters."""
